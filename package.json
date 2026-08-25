@@ -1,0 +1,30 @@
+{
+  "name": "tiktok-douyin-ultra-downloader",
+  "version": "2.5.0",
+  "description": "Ultra Fast Direct TikTok & Douyin Downloader Desktop App",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win"
+  },
+  "keywords": [
+    "tiktok",
+    "douyin",
+    "downloader",
+    "electron",
+    "desktop-app"
+  ],
+  "author": "Ultra Engine Team",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.ultra.tiktokdownloader",
+    "productName": "Ultra Downloader",
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
