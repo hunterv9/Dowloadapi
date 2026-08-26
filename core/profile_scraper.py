@@ -143,7 +143,7 @@ class ProfileScraper:
         profile_url = self.normalize_profile_url(profile_input)
         if "tiktok.com" in profile_url or "douyin.com" in profile_url:
             api = self._api_for(profile_url)
-            return api.scrape_profile_urls(profile_url, max_videos or 999999)
+            return api.scrape_profile_urls(profile_url, max_videos)
 
         return []
 
@@ -201,7 +201,7 @@ class ProfileScraper:
                     "total": total,
                     "error": str(e),
                 })
-            return {"status": "failed", "error": str(e)}
+            return {"status": "failed", "url": url, "error": str(e)}
 
     # ------------------------------------------------------------------ #
     # Batch download (concurrent)
@@ -252,6 +252,10 @@ class ProfileScraper:
         downloaded_count = sum(1 for r in results if r["status"] == "downloaded")
         skipped_count = sum(1 for r in results if r["status"] == "skipped")
         failed_count = sum(1 for r in results if r["status"] == "failed")
+        errors = [
+            {"url": r.get("url", ""), "error": r.get("error", "unknown")}
+            for r in results if r["status"] == "failed"
+        ]
 
         return {
             "success": failed_count == 0 or downloaded_count > 0,
@@ -261,6 +265,7 @@ class ProfileScraper:
             "skipped": skipped_count,
             "failed": failed_count,
             "total": total,
+            "errors": errors,
         }
 
     def download_profile(

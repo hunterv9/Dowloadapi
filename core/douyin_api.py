@@ -68,7 +68,7 @@ class DouyinAPI(BasePlatformAPI):
 
         # 1) Official Douyin mobile share endpoint
         ies_url = f"https://www.iesdouyin.com/share/video/{video_id}"
-        resp = self.session.get(ies_url, headers=headers, timeout=15)
+        resp = self._request_with_retry("GET", ies_url, headers=headers)
         if resp.status_code == 200:
             data = self.extract_json_script(resp.text, "_ROUTER_DATA")
             if data:
@@ -123,79 +123,6 @@ class DouyinAPI(BasePlatformAPI):
             "like_count": 0,
             "captions": captions[:8],
         }
-
-    def scrape_profile_urls(
-        self, profile_url: str, max_videos: int = 50
-    ) -> List[str]:
-        """Scrape a Douyin profile for video URLs (up to *max_videos*).
-
-        Strategy (in order):
-          1. Headless browser (Playwright) — renders JS, bypasses WAF
-          2. yt-dlp — handles anti-bot with built-in JS solver
-          3. HTML regex + embedded JSON — last resort
-        """
-        profile_url = self.resolve_shortlink(profile_url, self.SHORT_MARKERS)
-
-        # --- 1. Headless browser ---
-        from .browser_scraper import BrowserScraper
-        if BrowserScraper.is_available():
-            for headless in (True, False):
-                urls = BrowserScraper.scrape_profile(
-                    profile_url, max_videos, headless=headless
-                )
-                if urls:
-                    return urls
-
-        # --- 2. yt-dlp ---
-        urls = self._scrape_via_ytdlp(profile_url, max_videos)
-        if urls:
-            return urls
-
-        # --- 3. HTML fallback ---
-        return self._scrape_via_html(profile_url, max_videos)
-
-    def _scrape_via_ytdlp(self, profile_url: str, max_videos: int) -> List[str]:
-        """Use yt-dlp to list video URLs from a profile (handles anti-bot)."""
-        import time
-        try:
-            import yt_dlp
-        except ImportError:
-            _log.warning("yt-dlp not installed, falling back to HTML scraping")
-            return []
-
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "extract_flat": "in_playlist",
-            "ignoreerrors": True,
-            "playlistend": max_videos,
-            "socket_timeout": 30,
-            "geo_bypass": True,
-            "no_check_certificates": True,
-        }
-
-        for attempt in range(3):
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(profile_url, download=False)
-                if not info or "entries" not in info:
-                    return []
-                urls = []
-                for entry in info["entries"]:
-                    if not entry:
-                        continue
-                    url = entry.get("url") or entry.get("webpage_url")
-                    if url:
-                        urls.append(url)
-                    if len(urls) >= max_videos:
-                        break
-                if urls:
-                    return urls
-            except Exception as e:
-                _log.warning("yt-dlp attempt %d failed: %s", attempt + 1, e)
-            if attempt < 2:
-                time.sleep(2 * (attempt + 1))
-        return []
 
     def _scrape_via_html(self, profile_url: str, max_videos: int) -> List[str]:
         """Fallback: extract video IDs from HTML + embedded JSON."""

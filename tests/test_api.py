@@ -27,6 +27,7 @@ def _fake_session(resp):
     s = mock.Mock()
     s.get.return_value = resp
     s.head.return_value = resp
+    s.request.return_value = resp
     return s
 
 
@@ -93,11 +94,34 @@ def test_tiktok_profile_api_resolves_sec_uid():
     mock_ydl.__enter__ = mock.Mock(return_value=mock_ydl)
     mock_ydl.__exit__ = mock.Mock(return_value=False)
     mock_ydl.extract_info.return_value = {
-        "entries": [{"url": "https://www.tiktok.com/@creator/video/789"}]
+        "entries": [{
+            "url": "789",
+            "webpage_url": "https://www.tiktok.com/@creator/video/789",
+        }]
     }
 
     with mock.patch("yt_dlp.YoutubeDL", return_value=mock_ydl):
         urls = api.scrape_profile_urls("https://www.tiktok.com/@creator", max_videos=5)
+
+    assert urls == ["https://www.tiktok.com/@creator/video/789"]
+
+
+def test_tiktok_profile_browser_failure_uses_fallback():
+    api = TikTokAPI()
+
+    with mock.patch(
+        "core.browser_scraper.BrowserScraper.is_available", return_value=True
+    ), mock.patch(
+        "core.browser_scraper.BrowserScraper.scrape_profile",
+        side_effect=RuntimeError("browser unavailable"),
+    ), mock.patch.object(
+        api,
+        "_scrape_via_ytdlp",
+        return_value=["https://www.tiktok.com/@creator/video/789"],
+    ):
+        urls = api.scrape_profile_urls(
+            "https://www.tiktok.com/@creator", max_videos=5
+        )
 
     assert urls == ["https://www.tiktok.com/@creator/video/789"]
 

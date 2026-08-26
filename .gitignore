@@ -1,3 +1,18 @@
 /.browser_data
 /.pytest_cache
 /__pycache__
+
+# Local downloads and runtime data
+/downloads/
+
+# Python environments and generated files
+/.venv/
+/venv/
+/env/
+*.py[cod]
+*$py.class
+
+# Node dependencies and build output
+/node_modules/
+/dist/
+/build/

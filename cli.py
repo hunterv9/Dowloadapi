@@ -33,7 +33,11 @@ def print_banner():
 [/bold cyan]
 [dim]⚡ 100% Direct Official Engine (No 3rd Party APIs) • TikTok & Douyin Support[/dim]
 """
-    console.print(banner_text)
+    console.print(Panel.fit(
+        "[bold green][+][/bold green] [bold white]INFRABASES[/bold white]\n[dim]TikTok & Douyin Downloader[/dim]",
+        border_style="green",
+        padding=(1, 5),
+    ))
 
 def show_config(cookie_mgr: CookieManager):
     cfg = cookie_mgr.config
@@ -129,6 +133,13 @@ def handle_profile_download(scraper: ProfileScraper):
                 f"[bold red]Thất bại:[/bold red] {res.get('failed', 0)}",
                 title="[bold green]Kết Quả Tải Hàng Loạt[/bold green]"
             ))
+            errors = res.get("errors", [])
+            if errors:
+                console.print("\n[bold red]Chi tiết lỗi:[/bold red]")
+                for i, err in enumerate(errors, 1):
+                    url_short = err["url"][-60:] if len(err["url"]) > 60 else err["url"]
+                    console.print(f"  {i}. [yellow]{url_short}[/yellow]")
+                    console.print(f"     [red]{err['error']}[/red]")
         except Exception as e:
             console.print(f"\n[bold red]✖ Lỗi tiến trình hàng loạt:[/bold red] {e}")
 
@@ -160,10 +171,10 @@ def main():
         os.system("cls" if os.name == "nt" else "clear")
         print_banner()
         console.print("[bold cyan]=== MENU ĐIỀU KHIỂN ===[/bold cyan]")
-        console.print("1. [bold white]Tải 1 Video TikTok hoặc Douyin[/bold white] (Không Logo HD)")
-        console.print("2. [bold white]Tải Toàn Bộ Kênh / Danh Sách URL[/bold white] (Batch Downloader)")
-        console.print("3. [bold white]Cấu Hình Cookie & Trình Duyệt[/bold white]")
-        console.print("4. [bold white]Khởi Động Web Dashboard (GUI)[/bold white]")
+        console.print("1. [bold white]Tải video đơn[/bold white] (TikTok / Douyin)")
+        console.print("2. [bold white]Tải hàng loạt[/bold white] (Kênh / danh sách URL)")
+        console.print("3. [bold white]Cấu hình[/bold white] (Cookie / thư mục lưu)")
+        console.print("4. [bold white]Mở Web Dashboard[/bold white]")
         console.print("5. [bold red]Thoát[/bold red]")
 
         choice = Prompt.ask("\nNhập lựa chọn của bạn", choices=["1", "2", "3", "4", "5"], default="1")

@@ -39,9 +39,9 @@ def test_resolve_profile_handle_uses_profile_scraper():
     s.downloader.tiktok_api.scrape_profile_urls = mock.Mock(return_value=["video-url"])
 
     assert s.resolve_video_urls("@creator") == ["video-url"]
-    # Default max_videos=0 means fetch all → passes 999999 to API
+    # Default max_videos=0 means fetch all without an artificial limit.
     s.downloader.tiktok_api.scrape_profile_urls.assert_called_once_with(
-        "https://www.tiktok.com/@creator", 999999
+        "https://www.tiktok.com/@creator", 0
     )
 
 
@@ -51,7 +51,7 @@ def test_resolve_profile_url_is_not_treated_as_single_video():
 
     assert s.resolve_video_urls("https://www.tiktok.com/@creator") == ["video-url"]
     s.downloader.tiktok_api.scrape_profile_urls.assert_called_once_with(
-        "https://www.tiktok.com/@creator", 999999
+        "https://www.tiktok.com/@creator", 0
     )
 
 
@@ -117,3 +117,29 @@ def test_download_profile_resolves_then_downloads(tmp_path):
 
     assert res["downloaded"] == 1
     assert (tmp_path / "creator" / "download_archive.txt").exists()
+
+
+def test_download_video_list_forwards_each_resolved_url(tmp_path):
+    s = _build_scraper()
+    urls = [
+        "https://www.tiktok.com/@creator/video/1",
+        "https://www.tiktok.com/@creator/video/2",
+    ]
+    s.downloader.get_video_info = mock.Mock(
+        side_effect=[{"id": "1", "title": "one"}, {"id": "2", "title": "two"}]
+    )
+    s.downloader.download_video_with_info = mock.Mock()
+
+    result = s.download_video_list(
+        urls, username="creator", output_dir=str(tmp_path), workers=1
+    )
+
+    assert result["downloaded"] == 2
+    assert s.downloader.get_video_info.call_args_list == [
+        mock.call(urls[0]),
+        mock.call(urls[1]),
+    ]
+    assert [
+        call.args[0]
+        for call in s.downloader.download_video_with_info.call_args_list
+    ] == urls

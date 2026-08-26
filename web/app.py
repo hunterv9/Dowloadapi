@@ -3,9 +3,12 @@ import sys
 import uuid
 import json
 import asyncio
+import logging
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+
+_log = logging.getLogger(__name__)
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -41,6 +44,9 @@ scraper = ProfileScraper(cookie_mgr)
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+ASSETS_DIR = STATIC_DIR / "assets"
+ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
 def get_downloads_dir() -> Path:
     dir_path = Path(cookie_mgr.config.get("download_dir", "downloads"))
@@ -83,6 +89,7 @@ class DownloadProfileRequest(BaseModel):
     profile: str
     urls: Optional[List[str]] = None
     max_videos: Optional[int] = 0  # 0 = download ALL videos
+    custom_dir: Optional[str] = None
 
 class ConfigUpdateRequest(BaseModel):
     browser: Optional[str] = None
@@ -179,7 +186,7 @@ async def download_single(req: DownloadSingleRequest, background_tasks: Backgrou
     background_tasks.add_task(run_single_download_task, task_id, req.url, req.custom_dir)
     return {"success": True, "task_id": task_id}
 
-def run_profile_download_task(task_id: str, profile: str, urls: Optional[List[str]] = None, max_videos: int = 0):
+def run_profile_download_task(task_id: str, profile: str, urls: Optional[List[str]] = None, max_videos: int = 0, custom_dir: Optional[str] = None):
     download_tasks[task_id] = {
         "status": "resolving",
         "progress": 0,
@@ -218,7 +225,7 @@ def run_profile_download_task(task_id: str, profile: str, urls: Optional[List[st
             elif d.get("status") == "skipped":
                 download_tasks[task_id]["message"] = f"Bỏ qua video cũ: {d.get('id')}"
 
-        res = scraper.download_video_list(url_list, username=username, progress_hook=hook)
+        res = scraper.download_video_list(url_list, username=username, output_dir=custom_dir, progress_hook=hook)
         failed = res.get("failed", 0)
         downloaded = res.get("downloaded", 0)
         download_tasks[task_id]["status"] = "failed" if failed and not downloaded else "completed"
@@ -236,10 +243,22 @@ def run_profile_download_task(task_id: str, profile: str, urls: Optional[List[st
         download_tasks[task_id]["status"] = "failed"
         download_tasks[task_id]["error"] = str(e)
 
+@app.post("/api/scan-profile")
+async def scan_profile(req: VideoInfoRequest):
+    """Scan a profile URL and return the list of video URLs without downloading."""
+    if not req.url or not req.url.strip():
+        raise HTTPException(status_code=400, detail="Vui lòng nhập link profile")
+    try:
+        urls = scraper.resolve_video_urls(req.url.strip(), max_videos=0)
+        return {"success": True, "count": len(urls), "urls": urls}
+    except Exception as e:
+        _log.error("Scan profile failed: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.post("/api/download-profile")
 async def download_profile(req: DownloadProfileRequest, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
-    background_tasks.add_task(run_profile_download_task, task_id, req.profile, req.urls, req.max_videos or 0)
+    background_tasks.add_task(run_profile_download_task, task_id, req.profile, req.urls, req.max_videos or 0, req.custom_dir)
     return {"success": True, "task_id": task_id}
 
 @app.get("/api/task-status/{task_id}")

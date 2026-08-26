@@ -1,7 +1,7 @@
 @echo off
-title TikTok Video ^& Profile Downloader CLI
+title Infrabases - CLI
 echo ========================================================
-echo        TIKTOK VIDEO ^& PROFILE DOWNLOADER (CLI)
+echo        INFRABASES - TIKTOK ^& DOUYIN DOWNLOADER
 echo ========================================================
 python cli.py
 pause

@@ -1,16 +1,34 @@
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
+const net = require('net');
 
 let mainWindow = null;
 let pythonWsProcess = null;
 const WS_PORT = 8765;
+const REPOSITORY_URL = 'https://github.com/hunterv9/Dowloadapi';
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
-function startPythonWsBackend() {
-  // Start dedicated Python WebSocket Server (Zero FastAPI needed in Desktop App)
+function isWebSocketBackendRunning() {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: '127.0.0.1', port: WS_PORT });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('error', () => resolve(false));
+  });
+}
+
+async function startPythonWsBackend() {
+  if (await isWebSocketBackendRunning()) {
+    console.log(`[Python WS]: Reusing existing backend on port ${WS_PORT}`);
+    return;
+  }
+
   pythonWsProcess = spawn('python', ['desktop/ws_server.py'], {
     cwd: path.join(__dirname, '..'),
-    shell: true
+    windowsHide: true
   });
 
   pythonWsProcess.stdout.on('data', (data) => {
@@ -22,14 +40,23 @@ function startPythonWsBackend() {
   });
 }
 
+function stopPythonWsBackend() {
+  if (pythonWsProcess && !pythonWsProcess.killed) {
+    pythonWsProcess.kill();
+    pythonWsProcess = null;
+  }
+}
+
+ipcMain.handle('open-repository', () => shell.openExternal(REPOSITORY_URL));
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1240,
     height: 820,
     minWidth: 980,
     minHeight: 650,
-    frame: false, // Frameless for custom modern dark titlebar
-    backgroundColor: '#090c15',
+    frame: false, // Frameless window with custom controls in the shared UI
+    backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -66,26 +93,33 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
-  startPythonWsBackend();
-  createWindow();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
   });
-});
+
+  app.whenReady().then(async () => {
+    await startPythonWsBackend();
+    createWindow();
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 
 app.on('window-all-closed', () => {
-  if (pythonWsProcess) {
-    pythonWsProcess.kill();
-  }
+  stopPythonWsBackend();
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
 
 app.on('before-quit', () => {
-  if (pythonWsProcess) {
-    pythonWsProcess.kill();
-  }
+  stopPythonWsBackend();
 });

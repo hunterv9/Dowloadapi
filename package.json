@@ -1,9 +1,11 @@
 {
   "name": "tiktok-douyin-ultra-downloader",
   "version": "2.5.0",
-  "description": "Ultra Fast Direct TikTok & Douyin Downloader Desktop App",
+  "description": "Infrabases TikTok & Douyin Downloader Desktop App",
   "main": "electron/main.js",
   "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
     "start": "electron .",
     "dist:win": "electron-builder --win"
   },
@@ -16,13 +18,19 @@
   ],
   "author": "Ultra Engine Team",
   "license": "MIT",
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
   "devDependencies": {
     "electron": "^30.0.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.8"
   },
   "build": {
     "appId": "com.ultra.tiktokdownloader",
-    "productName": "Ultra Downloader",
+    "productName": "Infrabases",
     "win": {
       "target": "nsis"
     }

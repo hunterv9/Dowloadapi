@@ -197,15 +197,21 @@ async def handle_message(writer: asyncio.StreamWriter, req: Dict[str, Any]):
 
         elif action == "DOWNLOAD_PROFILE":
             profile = payload.get("profile", "")
-            urls = payload.get("urls", [])
+            urls = payload.get("urls") or []
+            max_videos = payload.get("max_videos") or 0
+            custom_dir = payload.get("custom_dir") or None
             task_id = payload.get("task_id", "task_batch")
             username = scraper.extract_username(profile)
             # Resolve a bare profile into its concrete video URLs when needed.
             if urls:
                 url_list = list(urls)
+                if max_videos:
+                    url_list = url_list[:max_videos]
             else:
                 loop = asyncio.get_running_loop()
-                url_list = await loop.run_in_executor(None, scraper.resolve_video_urls, profile)
+                url_list = await loop.run_in_executor(
+                    None, scraper.resolve_video_urls, profile, max_videos
+                )
 
             if not url_list:
                 await reply(
@@ -232,7 +238,14 @@ async def handle_message(writer: asyncio.StreamWriter, req: Dict[str, Any]):
             await reply("started", {"task_id": task_id, "total": len(url_list)})
 
             try:
-                res = await loop.run_in_executor(None, scraper.download_video_list, url_list, username, None, on_batch_hook)
+                res = await loop.run_in_executor(
+                    None,
+                    scraper.download_video_list,
+                    url_list,
+                    username,
+                    custom_dir,
+                    on_batch_hook,
+                )
                 if res.get("failed", 0) and not res.get("downloaded", 0):
                     await broadcast({
                         "event": "BATCH_FAILED",
@@ -354,7 +367,7 @@ async def client_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWri
 
 async def run_server(host="127.0.0.1", port=8765):
     server = await asyncio.start_server(client_handler, host, port)
-    print(f"⚡ [Desktop Engine]: WebSocket Server running on ws://{host}:{port}")
+    print(f"[Desktop Engine]: WebSocket Server running on ws://{host}:{port}")
     async with server:
         await server.serve_forever()
 

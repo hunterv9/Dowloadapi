@@ -1,8 +1,9 @@
 @echo off
-title TikTok & Douyin Downloader - Desktop WebSocket Engine
+setlocal
+cd /d "%~dp0"
+title Infrabases - Desktop App
 echo ========================================================
-echo   TIKTOK & DOUYIN ULTRA ENGINE - DESKTOP WEBSOCKET MODE
-echo   Port: ws://127.0.0.1:8765
+echo   INFRABASES - TIKTOK & DOUYIN DOWNLOADER
 echo ========================================================
-python desktop/ws_server.py
+npm start
 pause

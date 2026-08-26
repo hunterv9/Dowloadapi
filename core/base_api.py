@@ -7,6 +7,7 @@ that both platforms share — eliminating duplication between
 """
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import (
@@ -18,6 +19,8 @@ from typing import (
 )
 
 import requests
+
+_log = logging.getLogger(__name__)
 
 __all__ = ["BasePlatformAPI", "IPHONE_USER_AGENT", "PC_USER_AGENT"]
 
@@ -71,6 +74,18 @@ class BasePlatformAPI:
             self.session.headers["Cookie"] = self.cookie_string
 
     # -- cookie / session helpers --------------------------------------- #
+    def _recreate_session(self) -> None:
+        """Create a fresh ``requests.Session`` (new TLS handshake)."""
+        self.session.close()
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": IPHONE_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Referer": self.REFERER,
+        })
+        if self.cookie_string:
+            self.session.headers["Cookie"] = self.cookie_string
+
     def set_cookie_string(self, cookie_string: str) -> None:
         """Set (or clear) the Cookie header used for authenticated requests."""
         self.cookie_string = cookie_string or ""
@@ -207,7 +222,10 @@ class BasePlatformAPI:
     def _request_with_retry(
         self, method: str, url: str, max_retries: int = 3, **kwargs
     ) -> requests.Response:
-        """HTTP request with automatic retry on transient failures."""
+        """HTTP request with automatic retry on transient failures.
+
+        On SSL errors the session is recreated to get a fresh TLS handshake.
+        """
         kwargs.setdefault("timeout", 15)
         last_exc = None
         for attempt in range(max_retries):
@@ -216,6 +234,10 @@ class BasePlatformAPI:
                 if resp.status_code < 500:
                     return resp
                 last_exc = Exception(f"HTTP {resp.status_code}")
+            except requests.exceptions.SSLError as e:
+                last_exc = e
+                _log.warning("SSL error on attempt %d, recreating session: %s", attempt + 1, e)
+                self._recreate_session()
             except (requests.ConnectionError, requests.Timeout) as e:
                 last_exc = e
             if attempt < max_retries - 1:
@@ -268,4 +290,112 @@ class BasePlatformAPI:
         raise NotImplementedError
 
     def scrape_profile_urls(self, profile_url: str, max_videos: int = 50) -> List[str]:
+        """Scrape a profile for video URLs (up to *max_videos*).
+
+        Strategy (in order):
+          1. yt-dlp — handles playlist extraction and anti-bot logic
+          2. Headless browser (Playwright) — renders JS, bypasses WAF
+          3. HTML regex + embedded JSON — last resort (platform-specific)
+        """
+        profile_url = self.resolve_shortlink(profile_url, self.SHORT_MARKERS)
+        limit = max_videos or None  # 0 → unlimited
+
+        # --- 1. yt-dlp ---
+        urls = self._scrape_via_ytdlp(profile_url, limit)
+        if urls:
+            return urls
+
+        # --- 2. Headless browser ---
+        from .browser_scraper import BrowserScraper
+        fallback = limit or 50
+        if BrowserScraper.is_available():
+            for headless in (True, False):
+                try:
+                    urls = BrowserScraper.scrape_profile(
+                        profile_url, fallback, headless=headless
+                    )
+                except Exception as e:
+                    _log.warning(
+                        "Browser profile scrape failed (headless=%s): %s",
+                        headless,
+                        e,
+                    )
+                    continue
+                if urls:
+                    return urls
+
+        # --- 3. HTML fallback (platform-specific) ---
+        return self._scrape_via_html(profile_url, fallback)
+
+    def _scrape_via_ytdlp(
+        self, profile_url: str, max_videos: Optional[int]
+    ) -> List[str]:
+        """Use yt-dlp to list video URLs from a profile (handles anti-bot)."""
+        import os
+        import time
+        try:
+            import yt_dlp
+        except ImportError:
+            _log.warning("yt-dlp not installed, falling back to HTML scraping")
+            return []
+
+        # Suppress yt-dlp's direct stderr prints (e.g. "Unable to extract
+        # secondary user ID") which bypass the quiet/logger settings.
+        _orig_stderr = None
+        try:
+            _orig_stderr = os.dup(2)
+            os.dup2(os.open(os.devnull, os.O_WRONLY), 2)
+        except OSError:
+            _orig_stderr = None
+
+        ydl_opts: Dict[str, Any] = {
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": "in_playlist",
+            "ignoreerrors": True,
+            "socket_timeout": 30,
+            "geo_bypass": True,
+            "no_check_certificates": True,
+        }
+        if max_videos:
+            ydl_opts["playlistend"] = max_videos
+        if self.cookie_string:
+            ydl_opts["cookiefile"] = None
+            ydl_opts["http_headers"] = {"Cookie": self.cookie_string}
+
+        try:
+            for attempt in range(3):
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(profile_url, download=False)
+                    if not info or "entries" not in info:
+                        return []
+                    urls = []
+                    for entry in info["entries"]:
+                        if not entry:
+                            continue
+                        url = entry.get("webpage_url") or entry.get("url")
+                        if url:
+                            urls.append(url)
+                        if max_videos and len(urls) >= max_videos:
+                            break
+                    if urls:
+                        return urls
+                except Exception as e:
+                    _log.warning("yt-dlp attempt %d failed: %s", attempt + 1, e)
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+            return []
+        finally:
+            # Restore stderr
+            if _orig_stderr is not None:
+                try:
+                    os.close(2)
+                    os.dup2(_orig_stderr, 2)
+                    os.close(_orig_stderr)
+                except OSError:
+                    pass
+
+    def _scrape_via_html(self, profile_url: str, max_videos: int) -> List[str]:
+        """Platform-specific HTML fallback. Subclasses must override."""
         raise NotImplementedError
