@@ -26,9 +26,24 @@ async function startPythonWsBackend() {
     return;
   }
 
-  pythonWsProcess = spawn('python', ['desktop/ws_server.py'], {
-    cwd: path.join(__dirname, '..'),
+  const appRoot = app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar.unpacked')
+    : path.join(__dirname, '..');
+  const backendScript = path.join(appRoot, 'desktop', 'ws_server.py');
+
+  pythonWsProcess = spawn('python', [backendScript], {
+    cwd: appRoot,
     windowsHide: true
+  });
+
+  pythonWsProcess.on('error', (error) => {
+    console.error(`[Python WS Err]: ${error.message}`);
+  });
+
+  pythonWsProcess.on('exit', (code) => {
+    if (code && mainWindow && !mainWindow.isDestroyed()) {
+      console.error(`[Python WS Err]: backend exited with code ${code}`);
+    }
   });
 
   pythonWsProcess.stdout.on('data', (data) => {

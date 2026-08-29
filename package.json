@@ -31,6 +31,10 @@
   "build": {
     "appId": "com.ultra.tiktokdownloader",
     "productName": "Infrabases",
+    "asarUnpack": [
+      "desktop/**",
+      "core/**"
+    ],
     "win": {
       "target": "nsis"
     }
