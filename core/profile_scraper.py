@@ -36,6 +36,7 @@ class ProfileScraper:
     def __init__(self, cookie_manager: Optional[CookieManager] = None):
         self.cookie_manager = cookie_manager or CookieManager()
         self.downloader = TikTokDownloader(self.cookie_manager)
+        self._archive_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
     # URL / username helpers
@@ -165,16 +166,20 @@ class ProfileScraper:
             info = self.downloader.get_video_info(url)
             vid = str(info.get("id", ""))
 
-            if vid in archived_ids:
-                if progress_hook:
-                    progress_hook({
-                        "status": "skipped",
-                        "index": idx,
-                        "total": total,
-                        "title": info.get("title"),
-                        "id": vid,
-                    })
-                return {"status": "skipped", "id": vid}
+            # Atomic check-and-reserve to prevent duplicate downloads
+            with self._archive_lock:
+                if vid in archived_ids:
+                    if progress_hook:
+                        progress_hook({
+                            "status": "skipped",
+                            "index": idx,
+                            "total": total,
+                            "title": info.get("title"),
+                            "id": vid,
+                        })
+                    return {"status": "skipped", "id": vid}
+                # Reserve this ID immediately so other threads skip it
+                archived_ids.add(vid)
 
             if progress_hook:
                 progress_hook({
@@ -190,7 +195,6 @@ class ProfileScraper:
                 url, info, custom_output_dir=str(user_dir)
             )
             self.append_archive(archive_path, vid)
-            archived_ids.add(vid)
             return {"status": "downloaded", "id": vid}
 
         except Exception as e:
@@ -223,7 +227,6 @@ class ProfileScraper:
 
         archive_path = user_dir / "download_archive.txt"
         archived_ids = self.load_archive(archive_path)
-        self._archive_lock = threading.Lock()
 
         results: List[Dict[str, Any]] = []
         total = len(urls_or_ids)

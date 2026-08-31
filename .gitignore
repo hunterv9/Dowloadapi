@@ -2,6 +2,9 @@
 /.pytest_cache
 /__pycache__
 
+# Config may contain cookies — never commit
+/config.json
+
 # Local downloads and runtime data
 /downloads/
 

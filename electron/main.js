@@ -29,12 +29,22 @@ async function startPythonWsBackend() {
   const appRoot = app.isPackaged
     ? path.join(process.resourcesPath, 'app.asar.unpacked')
     : path.join(__dirname, '..');
-  const backendScript = path.join(appRoot, 'desktop', 'ws_server.py');
 
-  pythonWsProcess = spawn('python', [backendScript], {
-    cwd: appRoot,
-    windowsHide: true
-  });
+  if (app.isPackaged) {
+    // Use bundled Python executable (PyInstaller output)
+    const backendExe = path.join(appRoot, 'tiktok-backend.exe');
+    pythonWsProcess = spawn(backendExe, [], {
+      cwd: appRoot,
+      windowsHide: true
+    });
+  } else {
+    // Development: use system Python
+    const backendScript = path.join(appRoot, 'desktop', 'ws_server.py');
+    pythonWsProcess = spawn('python', [backendScript], {
+      cwd: appRoot,
+      windowsHide: true
+    });
+  }
 
   pythonWsProcess.on('error', (error) => {
     console.error(`[Python WS Err]: ${error.message}`);
@@ -53,6 +63,20 @@ async function startPythonWsBackend() {
   pythonWsProcess.stderr.on('data', (data) => {
     console.error(`[Python WS Err]: ${data}`);
   });
+
+  // Wait for backend to be ready (up to 10 seconds)
+  const maxWait = 10000;
+  const interval = 200;
+  let waited = 0;
+  while (waited < maxWait) {
+    if (await isWebSocketBackendRunning()) {
+      console.log(`[Python WS]: Backend ready after ${waited}ms`);
+      return;
+    }
+    await new Promise(r => setTimeout(r, interval));
+    waited += interval;
+  }
+  console.error(`[Python WS]: Backend not ready after ${maxWait}ms, proceeding anyway`);
 }
 
 function stopPythonWsBackend() {

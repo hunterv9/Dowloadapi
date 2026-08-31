@@ -1,6 +1,5 @@
 import os
 import sys
-import argparse
 
 # Ensure UTF-8 console output on Windows
 if sys.platform == "win32":
@@ -24,17 +23,17 @@ console = Console()
 
 def print_banner():
     banner_text = r"""[bold cyan]
-  _______ _ _   _______    _      _____                      _                 _           
- |__   __(_) | |__   __|  | |    |  __ \                    | |               | |          
-    | |   _| | __ | | ___ | | __ | |  | | _____      ___ __ | | ___   __ _  __| | ___ _ __ 
+  _______ _ _   _______    _      _____                      _                 _
+ |__   __(_) | |__   __|  | |    |  __ \                    | |               | |
+    | |   _| | __ | | ___ | | __ | |  | | _____      ___ __ | | ___   __ _  __| | ___ _ __
     | |  | | |/ / | |/ _ \| |/ / | |  | |/ _ \ \ /\ / / '_ \| |/ _ \ / _` |/ _` |/ _ \ '__|
-    | |  | |   <  | | (_) |   <  | |__| | (_) \ V  V /| | | | | (_) | (_| | (_| |  __/ |   
-    |_|  |_|_|\_\ |_|\___/|_|\_\ |_____/ \___/ \_/\_/ |_| |_|_|\___/ \__,_|\__,_|\___|_|   
+    | |  | |   <  | | (_) |   <  | |__| | (_) \ V  V /| | | | | (_) | (_| | (_| |  __/ |
+    |_|  |_|_|\_\ |_|\___/|_|\_\ |_____/ \___/ \_/\_/ |_| |_|_|\___/ \__,_|\__,_|\___|_|
 [/bold cyan]
 [dim]⚡ 100% Direct Official Engine (No 3rd Party APIs) • TikTok & Douyin Support[/dim]
 """
     console.print(Panel.fit(
-        "[bold green][+][/bold green] [bold white]INFRABASES[/bold white]\n[dim]TikTok & Douyin Downloader[/dim]",
+        banner_text + "[bold green][+][/bold green] [bold white]INFRABASES[/bold white]\n[dim]TikTok & Douyin Downloader[/dim]",
         border_style="green",
         padding=(1, 5),
     ))
