@@ -5,16 +5,10 @@ import json
 from pathlib import Path
 from typing import Dict, Any, Optional, Callable, List
 
+from .base_api import sanitize_filename
 from .cookie_manager import CookieManager
 from .tiktok_api import TikTokAPI
 from .douyin_api import DouyinAPI
-
-
-def sanitize_filename(name: str) -> str:
-    """Sanitize a filename by removing invalid Windows/Unix characters."""
-    clean = re.sub(r'[\\/*?:"<>|]', '', name)
-    clean = re.sub(r'\s+', ' ', clean).strip()
-    return clean[:100]
 
 
 class TikTokDownloader:

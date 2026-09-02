@@ -23,9 +23,9 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "electron": "^30.0.0",
-    "electron-builder": "^24.13.3",
     "@vitejs/plugin-react": "^4.3.1",
+    "electron": "^30.0.0",
+    "electron-builder": "^26.15.3",
     "vite": "^5.4.8"
   },
   "build": {
@@ -33,10 +33,23 @@
     "productName": "Infrabases",
     "asarUnpack": [
       "desktop/**",
-      "core/**"
+      "core/**",
+      "tiktok-backend.exe"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/tiktok-backend.exe",
+        "to": "app.asar.unpacked/tiktok-backend.exe"
+      }
     ],
     "win": {
       "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     }
   }
 }

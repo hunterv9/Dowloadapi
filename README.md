@@ -35,28 +35,22 @@ python -m playwright install chromium
 ## 🚀 Hướng Dẫn Sử Dụng
 
 ### Cách 1: Chạy Giao Diện Web (Khuyên dùng)
-* Nhấp đúp `run_gui.bat` hoặc:
-  ```bash
-  python -m uvicorn web.app:app --host 127.0.0.1 --port 8080
-  ```
+```bash
+python -m uvicorn web.app:app --host 127.0.0.1 --port 8080
+```
 * Mở `http://127.0.0.1:8080` trên trình duyệt.
 
 ### Cách 2: Chạy Giao Diện Dòng Lệnh (CLI)
-* Nhấp đúp `run_cli.bat` hoặc chạy:
-  ```bash
-  python cli.py
-  ```
+```bash
+python cli.py
+```
 * Chức năng tải hàng loạt hỗ trợ: `@username`, link profile TikTok/Douyin, hoặc file `.txt/.csv` chứa danh sách URL.
 
 ### Cách 3: Chạy Desktop Electron
-* Cài dependency Node.js một lần:
-  ```bash
-  npm install
-  ```
-* Khởi chạy bằng `run_desktop.bat` hoặc:
-  ```bash
-  npm start
-  ```
+```bash
+npm install   # lần đầu
+npm start
+```
 
 ### Luồng tải Profile
 
@@ -72,27 +66,45 @@ Profile URL
 
 ---
 ## 📁 Cấu Trúc Dự Án
+
+Chỉ có **20 file code** — mỗi file có mục đích rõ ràng:
+
 ```
-tiktok-downloader/
-├── core/
-│   ├── base_api.py            # Base class dùng chung (HTTP, download stream, subtitle, retry)
-│   ├── browser_scraper.py     # Playwright fallback cho profile
-│   ├── tiktok_api.py          # Client TikTok và profile resolver
-│   ├── douyin_api.py          # Client Douyin và profile resolver
-│   ├── cookie_manager.py     # Quản lý cấu hình + cookie thủ công
-│   ├── downloader.py          # Tải video đơn + subtitle
-│   └── profile_scraper.py     # Quét & tải toàn bộ kênh (song song)
-├── web/
-│   ├── app.py                 # FastAPI backend (+ path-safety)
-│   └── static/                # Giao diện Web/Desktop (HTML, CSS, JS)
-├── desktop/
-│   └── ws_server.py           # WebSocket backend cho Electron
-├── electron/                  # Electron shell (main.js, preload.js)
-├── tests/                     # Bộ kiểm thử pytest
-├── cli.py                    # Menu tương tác dòng lệnh
-├── run_cli.bat / run_gui.bat / run_desktop.bat
-├── config.json               # Cấu hình lưu trữ
-└── requirements.txt          # Danh sách thư viện cần thiết
+core/                          ← Logic chính (8 file)
+  base_api.py                  # HTTP chung, download stream, retry, subtitle
+  tiktok_api.py                # Trích video info từ TikTok
+  douyin_api.py                # Trích video info từ Douyin
+  downloader.py                # Chọn đúng API → tải video + metadata
+  profile_scraper.py           # Tải hàng loạt profile (4 threads)
+  cookie_manager.py            # Đọc/ghi config.json
+  browser_scraper.py           # Playwright fallback (anti-detection)
+  service.py                   # ★ Logic chung — Web và Desktop đều gọi vào đây
+
+web/app.py                     # Web server (FastAPI) — chỉ routing
+desktop/ws_server.py           # Desktop server (WebSocket) — chỉ protocol
+cli.py                         # Giao diện dòng lệnh (Rich menu)
+electron/main.js               # Electron desktop app
+electron/preload.js            # Electron security bridge
+
+frontend/src/main.jsx          # Giao diện UI (React, 4 views)
+frontend/src/styles.css        # CSS styles
+
+config.json                    # Cấu hình runtime
+requirements.txt               # Python dependencies
+package.json                   # Node.js dependencies
+vite.config.js                 # Vite build config
 ```
 
-Thư mục `downloads/` và dữ liệu browser là dữ liệu runtime local, không thuộc source code của repository.
+### Kiến trúc
+
+```
+User → CLI / Web / Desktop (transport layer — chỉ routing)
+         ↓
+    core/service.py (logic chung — duy nhất 1 nơi)
+         ↓
+    core/downloader.py → TikTokAPI / DouyinAPI
+         ↓
+    core/base_api.py (HTTP, download, retry)
+```
+
+**Muốn sửa bug?** Chỉ cần sửa trong `core/service.py` — cả Web và Desktop đều tự động cập nhật.
