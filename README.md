@@ -36,9 +36,13 @@ python -m playwright install chromium
 
 ### Cách 1: Chạy Giao Diện Web (Khuyên dùng)
 ```bash
+# Cách nhanh — chạy trực tiếp
+python web/app.py
+
+# Hoặc dùng uvicorn với tuỳ chỉnh host/port
 python -m uvicorn web.app:app --host 127.0.0.1 --port 8080
 ```
-* Mở `http://127.0.0.1:8080` trên trình duyệt.
+* Mở `http://127.0.0.1:8000` (khi chạy trực tiếp) hoặc `http://127.0.0.1:8080` (khi dùng uvicorn) trên trình duyệt.
 
 ### Cách 2: Chạy Giao Diện Dòng Lệnh (CLI)
 ```bash

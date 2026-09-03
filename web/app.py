@@ -3,6 +3,16 @@
 This file is a thin routing layer — all business logic lives in core/service.py.
 """
 
+import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path so `from core import …` works
+# regardless of whether the app is launched as `python web/app.py`
+# or `python -m web.app`.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import uuid
 import time
 import json
@@ -92,6 +102,7 @@ async def _localhost_only(request: Request, call_next):
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/assets", StaticFiles(directory=str(STATIC_DIR / "assets")), name="assets")
 
 
 # ── WebSocket endpoint for real-time progress ────────────────────────────────
@@ -178,6 +189,10 @@ class DeleteFileRequest(BaseModel):
 @app.get("/")
 async def root():
     return FileResponse(STATIC_DIR / "index.html")
+
+@app.get("/favicon.ico")
+async def favicon():
+    return FileResponse(STATIC_DIR / "favicon.ico")
 
 @app.get("/downloaded-media/{file_path:path}")
 async def serve_downloaded_media(file_path: str):
@@ -420,3 +435,8 @@ async def api_delete_download(req: DeleteFileRequest):
     if not result.get("success"):
         raise HTTPException(status_code=404, detail=result.get("error"))
     return {"success": True, "message": "Đã xóa file thành công"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
