@@ -18,6 +18,26 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from core import service
 
+
+def _friendly_error(exc: Exception) -> str:
+    """Convert technical exceptions into user-friendly Vietnamese messages."""
+    msg = str(exc).lower()
+    raw = str(exc)
+    if "invalid url" in msg or "not a valid" in msg or "unsupported url" in msg:
+        return "Link không hợp lệ. Kiểm tra lại đường dẫn TikTok hoặc Douyin."
+    if "private" in msg or "login" in msg or "403" in msg:
+        return "Video ở chế độ riêng tư hoặc yêu cầu đăng nhập."
+    if "not found" in msg or "404" in msg:
+        return "Video không tồn tại hoặc đã bị xóa."
+    if "timeout" in msg or "timed out" in msg:
+        return "Kết nối quá chậm. Thử lại sau."
+    if "connection" in msg or "network" in msg:
+        return "Không thể kết nối mạng. Kiểm tra internet."
+    if "rate limit" in msg or "429" in msg:
+        return "Tải quá nhanh. Chờ vài giây rồi thử lại."
+    return f"Đã xảy ra lỗi: {raw[:120]}" if len(raw) > 120 else f"Đã xảy ra lỗi: {raw}"
+
+
 # ── WebSocket protocol helpers ───────────────────────────────────────────────
 
 CLIENTS: Set[asyncio.StreamWriter] = set()
@@ -153,7 +173,7 @@ async def _handle(writer: asyncio.StreamWriter, req: Dict[str, Any]):
                 )
                 await _broadcast({"event": "DOWNLOAD_COMPLETED", "task_id": task_id, "result": res})
             except Exception as e:
-                await _broadcast({"event": "DOWNLOAD_FAILED", "task_id": task_id, "error": str(e)})
+                await _broadcast({"event": "DOWNLOAD_FAILED", "task_id": task_id, "error": _friendly_error(e)})
 
         # ── Profile download ────────────────────────────────────────────
         elif action == "DOWNLOAD_PROFILE":
@@ -198,7 +218,7 @@ async def _handle(writer: asyncio.StreamWriter, req: Dict[str, Any]):
                 else:
                     await _broadcast({"event": "BATCH_COMPLETED", "task_id": task_id, "result": res})
             except Exception as e:
-                await _broadcast({"event": "BATCH_FAILED", "task_id": task_id, "error": str(e)})
+                await _broadcast({"event": "BATCH_FAILED", "task_id": task_id, "error": _friendly_error(e)})
 
         # ── File management ─────────────────────────────────────────────
         elif action == "GET_DOWNLOADS":
@@ -231,7 +251,7 @@ async def _handle(writer: asyncio.StreamWriter, req: Dict[str, Any]):
             await reply("error", error=f"Unknown action: {action}")
 
     except Exception as e:
-        await reply("error", error=str(e))
+        await reply("error", error=_friendly_error(e))
 
 
 # ── Client connection handler ────────────────────────────────────────────────

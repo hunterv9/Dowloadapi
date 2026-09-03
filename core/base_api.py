@@ -308,6 +308,9 @@ class BasePlatformAPI:
         # --- 2. Headless browser ---
         from .browser_scraper import BrowserScraper
         fallback = limit or 50
+        if not BrowserScraper.is_available():
+            _log.info("Playwright chưa sẵn sàng, đang thử tự động cài đặt Chromium...")
+            BrowserScraper.install_browser()
         if BrowserScraper.is_available():
             for headless in (True, False):
                 try:
@@ -323,6 +326,10 @@ class BasePlatformAPI:
                     continue
                 if urls:
                     return urls
+        else:
+            _log.warning(
+                "Không thể cài đặt Playwright. Chạy 'pip install playwright && playwright install chromium' để bật tính năng quét profile tự động."
+            )
 
         # --- 3. HTML fallback (platform-specific) ---
         return self._scrape_via_html(profile_url, fallback)

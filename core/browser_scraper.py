@@ -5,6 +5,7 @@ Falls back gracefully when Playwright is not installed.
 """
 
 import re
+import sys
 import logging
 from pathlib import Path
 from typing import List, Optional
@@ -22,11 +23,46 @@ class BrowserScraper:
 
     @staticmethod
     def is_available() -> bool:
-        """Check if Playwright is installed and usable."""
+        """Check if Playwright is installed and browsers are downloaded."""
         try:
-            import playwright.sync_api  # noqa: F401
-            return True
+            from playwright.sync_api import sync_playwright  # noqa: F401
         except ImportError:
+            return False
+        # Check if at least Chromium browser is installed
+        try:
+            import subprocess
+            result = subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "--dry-run"],
+                capture_output=True, text=True, timeout=10,
+            )
+            # If "chromium" appears as already installed, we're good
+            if "chromium" in result.stdout.lower() and "installed" in result.stdout.lower():
+                return True
+            # Fallback: try launching to verify
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+                browser.close()
+                return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def install_browser() -> bool:
+        """Auto-install Chromium browser for Playwright. Returns True on success."""
+        try:
+            import subprocess
+            _log.info("Đang tự động cài đặt Chromium cho Playwright...")
+            result = subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                capture_output=True, text=True, timeout=300,
+            )
+            if result.returncode == 0:
+                _log.info("Cài đặt Chromium thành công")
+                return True
+            _log.warning("Cài đặt Chromium thất bại: %s", result.stderr)
+            return False
+        except Exception as e:
+            _log.warning("Không thể tự động cài đặt Chromium: %s", e)
             return False
 
     @staticmethod

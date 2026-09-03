@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const net = require('net');
@@ -8,6 +8,16 @@ let pythonWsProcess = null;
 const WS_PORT = 8765;
 const REPOSITORY_URL = 'https://github.com/hunterv9/Dowloadapi';
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+// ── Auto-update ─────────────────────────────────────────────────────────────
+let autoUpdater;
+try {
+  autoUpdater = require('electron-updater').autoUpdater;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+} catch (e) {
+  console.log('[AutoUpdate]: electron-updater not available');
+}
 
 function isWebSocketBackendRunning() {
   return new Promise((resolve) => {
@@ -145,6 +155,32 @@ if (!hasSingleInstanceLock) {
   app.whenReady().then(async () => {
     await startPythonWsBackend();
     createWindow();
+
+    // Check for updates after window is shown
+    if (autoUpdater && app.isPackaged) {
+      autoUpdater.checkForUpdates().catch(() => {});
+      autoUpdater.on('update-available', (info) => {
+        dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'Cập nhật mới',
+          message: `Có phiên bản mới v${info.version}`,
+          detail: 'Bạn có muốn tải xuống và cài đặt không?',
+          buttons: ['Tải ngay', 'Để sau'],
+        }).then(({ response }) => {
+          if (response === 0) autoUpdater.downloadUpdate();
+        });
+      });
+      autoUpdater.on('update-downloaded', () => {
+        dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'Sẵn sàng cài đặt',
+          message: 'Đã tải xong bản cập nhật. Khởi động lại để áp dụng.',
+          buttons: ['Khởi động lại', 'Để sau'],
+        }).then(({ response }) => {
+          if (response === 0) autoUpdater.quitAndInstall();
+        });
+      });
+    }
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

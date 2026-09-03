@@ -1,5 +1,6 @@
 import os
 import sys
+import subprocess
 
 # Ensure UTF-8 console output on Windows
 if sys.platform == "win32":
@@ -20,6 +21,24 @@ from core.downloader import TikTokDownloader
 from core.profile_scraper import ProfileScraper
 
 console = Console()
+
+
+def _cli_friendly_error(exc: Exception) -> str:
+    """Convert technical exceptions into user-friendly Vietnamese messages."""
+    msg = str(exc).lower()
+    if "invalid url" in msg or "not a valid" in msg or "unsupported url" in msg:
+        return "Link không hợp lệ. Kiểm tra lại đường dẫn TikTok hoặc Douyin."
+    if "private" in msg or "login" in msg or "403" in msg:
+        return "Video ở chế độ riêng tư hoặc yêu cầu đăng nhập."
+    if "not found" in msg or "404" in msg:
+        return "Video không tồn tại hoặc đã bị xóa."
+    if "timeout" in msg or "timed out" in msg:
+        return "Kết nối quá chậm. Thử lại sau."
+    if "connection" in msg or "network" in msg:
+        return "Không thể kết nối mạng. Kiểm tra internet."
+    if "rate limit" in msg or "429" in msg:
+        return "Tải quá nhanh. Chờ vài giây rồi thử lại."
+    return str(exc)
 
 def print_banner():
     banner_text = r"""[bold cyan]
@@ -61,7 +80,7 @@ def handle_single_download(downloader: TikTokDownloader):
         try:
             info = downloader.get_video_info(url)
         except Exception as e:
-            console.print(f"[bold red]Lỗi phân tích:[/bold red] {e}")
+            console.print(f"[bold red]Lỗi phân tích:[/bold red] {_cli_friendly_error(e)}")
             return
 
     console.print(Panel.fit(
@@ -94,7 +113,7 @@ def handle_single_download(downloader: TikTokDownloader):
             res = downloader.download_video(url, progress_callback=update_progress)
             console.print(f"\n[bold green]✔ Tải thành công![/bold green] Đã lưu tại:\n[yellow]{res['saved_path']}[/yellow]")
         except Exception as e:
-            console.print(f"\n[bold red]✖ Lỗi khi tải video:[/bold red] {e}")
+            console.print(f"\n[bold red]✖ Lỗi khi tải video:[/bold red] {_cli_friendly_error(e)}")
 
 def handle_profile_download(scraper: ProfileScraper):
     target = Prompt.ask("\n[bold cyan]Nhập @username kênh hoặc đường dẫn file danh sách URL[/bold cyan]")
@@ -140,7 +159,7 @@ def handle_profile_download(scraper: ProfileScraper):
                     console.print(f"  {i}. [yellow]{url_short}[/yellow]")
                     console.print(f"     [red]{err['error']}[/red]")
         except Exception as e:
-            console.print(f"\n[bold red]✖ Lỗi tiến trình hàng loạt:[/bold red] {e}")
+            console.print(f"\n[bold red]✖ Lỗi tiến trình hàng loạt:[/bold red] {_cli_friendly_error(e)}")
 
 def handle_settings(cookie_mgr: CookieManager):
     show_config(cookie_mgr)
@@ -188,8 +207,18 @@ def main():
             handle_settings(cookie_mgr)
             Prompt.ask("\n[dim]Nhấn Enter để tiếp tục...[/dim]")
         elif choice == "4":
-            console.print("[bold green]Đang khởi động Web Dashboard tại http://127.0.0.1:8080...[/bold green]")
-            os.system("python -m uvicorn web.app:app --host 127.0.0.1 --port 8080 --reload")
+            console.print("[bold green]Đang khởi động Web Dashboard tại http://127.0.0.1:8080 ...[/bold green]")
+            console.print("[dim]Nhấn Ctrl+C trong terminal này để dừng server.[/dim]")
+            try:
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "uvicorn", "web.app:app",
+                     "--host", "127.0.0.1", "--port", "8080"],
+                    cwd=os.path.dirname(os.path.abspath(__file__)),
+                )
+                proc.wait()
+            except KeyboardInterrupt:
+                proc.terminate()
+                console.print("\n[yellow]Đã dừng Web Dashboard.[/yellow]")
         elif choice == "5":
             console.print("[yellow]Tạm biệt![/yellow]")
             break

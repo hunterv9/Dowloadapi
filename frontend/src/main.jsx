@@ -55,7 +55,9 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState(null);
+  const [updateInfo, setUpdateInfo] = useState(null);
   const socketRef = useRef(null);
+  const progressWsRef = useRef(null);
   const callbacksRef = useRef(new Map());
   const requestIdRef = useRef(1);
   const retryRef = useRef(null);
@@ -243,10 +245,15 @@ function App() {
 
   useEffect(() => {
     connect();
-    if (!isDesktop) loadInitialRest();
+    if (!isDesktop) {
+      loadInitialRest();
+      connectProgressWs();
+      checkVersion();
+    }
     return () => {
       if (retryRef.current) window.clearTimeout(retryRef.current);
       socketRef.current?.close();
+      progressWsRef.current?.close();
     };
   }, []);
 
@@ -259,6 +266,55 @@ function App() {
       setConnection("rest");
       notify(error.message, "error");
     }
+  };
+
+  // ── WebSocket progress connection (REST mode only) ──────────────────────
+  const connectProgressWs = () => {
+    if (isDesktop) return; // Desktop uses its own WS
+    try {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${proto}//${window.location.host}/ws/progress`);
+      progressWsRef.current = ws;
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.event === "DOWNLOAD_PROGRESS") {
+            setSingle((c) => ({ ...c, percent: msg.percent || 0, message: "Đang tải dữ liệu..." }));
+          } else if (msg.event === "DOWNLOAD_COMPLETED") {
+            setSingle({ status: "completed", percent: 100, filename: msg.result?.filename || "Video", message: "Đã lưu video vào thư viện" });
+            notify("Tải video thành công", "success");
+            loadDownloads();
+          } else if (msg.event === "DOWNLOAD_FAILED") {
+            setSingle((c) => ({ ...c, status: "failed", message: msg.error || "Tải thất bại" }));
+            notify(msg.error || "Tải video thất bại", "error");
+          } else if (msg.event === "BATCH_PROGRESS") {
+            const pct = msg.percent || (msg.total ? Math.round((msg.index / msg.total) * 100) : 0);
+            setBatch({ status: "downloading", percent: pct, message: msg.message || "Đang xử lý...", subtext: `Đã xử lý ${msg.index || 0}/${msg.total || 0} video` });
+          } else if (msg.event === "BATCH_COMPLETED") {
+            setBatch({ status: "completed", percent: 100, message: "Hoàn tất", subtext: `Đã lưu ${msg.result?.downloaded || 0} video` });
+            notify("Tải hàng loạt thành công", "success");
+            loadDownloads();
+          } else if (msg.event === "BATCH_FAILED") {
+            setBatch((c) => ({ ...c, status: "failed", message: "Không thể tải hàng loạt", subtext: msg.error || "Đã xảy ra lỗi" }));
+            notify(msg.error || "Tải hàng loạt thất bại", "error");
+          }
+        } catch (e) { console.error(e); }
+      };
+      ws.onclose = () => { progressWsRef.current = null; };
+    } catch (e) { /* silent */ }
+  };
+
+  // ── Version check ──────────────────────────────────────────────────────
+  const checkVersion = async () => {
+    try {
+      const resp = await fetch("/api/version");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data.update_available) {
+        setUpdateInfo(data);
+        notify(`Có phiên bản mới v${data.latest}!`, "info");
+      }
+    } catch (e) { /* silent */ }
   };
 
   const analyze = async () => {
@@ -320,6 +376,7 @@ function App() {
   const changeProfile = (value) => { setProfile(value); if (scannedProfile && scannedProfile.profile !== value.trim()) { setScannedProfile(null); setScanCount(null); } };
 
   return <div className="app-shell">
+    {updateInfo && <div className="update-banner"><span>🚀 Có phiên bản mới <strong>v{updateInfo.latest}</strong> — <a href={updateInfo.url || repositoryUrl + "/releases/latest"} target="_blank" rel="noreferrer">Tải ngay</a></span><button onClick={() => setUpdateInfo(null)} aria-label="Đóng"><Icon name="close" size={14} /></button></div>}
     <header className="topbar">
       <div className="brand"><img className="brand-logo" src="./favicon.ico" alt="" /><div><strong>INFRABASES</strong><span>VIDEO WORKSPACE</span></div></div>
       <a className="repo-link" href={repositoryUrl} target="_blank" rel="noreferrer" onClick={openRepository} aria-label="Mở repository GitHub" title="Mở repository GitHub"><Icon name="github" size={17} /></a>
