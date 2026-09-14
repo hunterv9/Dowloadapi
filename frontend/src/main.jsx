@@ -56,19 +56,7 @@ function App() {
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState(null);
   const [updateInfo, setUpdateInfo] = useState(null);
-  const socketRef = useRef(null);
   const progressWsRef = useRef(null);
-  const callbacksRef = useRef(new Map());
-  const requestIdRef = useRef(1);
-  const retryRef = useRef(null);
-  const isDesktop = Boolean(window.electronAPI) || window.location.protocol === "file:";
-
-  const openRepository = (event) => {
-    if (window.electronAPI?.openExternal) {
-      event.preventDefault();
-      window.electronAPI.openExternal().catch(() => window.open(repositoryUrl, "_blank", "noopener,noreferrer"));
-    }
-  };
 
   const notify = (message, type = "info") => {
     setToast({ message, type });
@@ -134,36 +122,6 @@ function App() {
     }, 800);
   };
 
-  const handleServerMessage = (message) => {
-    if (message.id && callbacksRef.current.has(message.id)) {
-      const callback = callbacksRef.current.get(message.id);
-      callbacksRef.current.delete(message.id);
-      if (message.status === "error") callback.reject(new Error(message.error));
-      else callback.resolve(message.data);
-      return;
-    }
-    if (message.event === "DOWNLOAD_PROGRESS") {
-      setSingle((current) => ({ ...current, percent: message.percent || 0, message: "Đang tải dữ liệu..." }));
-    } else if (message.event === "DOWNLOAD_COMPLETED") {
-      setSingle({ status: "completed", percent: 100, filename: message.result?.filename || "Video", message: "Đã lưu video vào thư viện" });
-      notify("Tải video thành công", "success");
-      loadDownloads();
-    } else if (message.event === "DOWNLOAD_FAILED") {
-      setSingle((current) => ({ ...current, status: "failed", message: message.error || "Tải thất bại" }));
-      notify(message.error || "Tải video thất bại", "error");
-    } else if (message.event === "BATCH_PROGRESS") {
-      const percent = message.total ? Math.round((message.index / message.total) * 100) : 0;
-      setBatch({ status: "downloading", percent, message: message.message || "Đang xử lý...", subtext: `Đã xử lý ${message.index || 0}/${message.total || 0} video` });
-    } else if (message.event === "BATCH_COMPLETED") {
-      setBatch({ status: "completed", percent: 100, message: "Hoàn tất", subtext: `Đã lưu ${message.result?.downloaded || 0} video` });
-      notify("Tải hàng loạt thành công", "success");
-      loadDownloads();
-    } else if (message.event === "BATCH_FAILED") {
-      setBatch((current) => ({ ...current, status: "failed", message: "Không thể tải hàng loạt", subtext: message.error || "Đã xảy ra lỗi" }));
-      notify(message.error || "Tải hàng loạt thất bại", "error");
-    }
-  };
-
   const restAction = async (action, payload) => {
     const routes = {
       GET_CONFIG: ["/api/config", "GET"],
@@ -194,65 +152,13 @@ function App() {
     return data;
   };
 
-  const sendAction = (action, payload = {}) => new Promise((resolve, reject) => {
-    const socket = socketRef.current;
-    if (socket?.readyState === WebSocket.OPEN) {
-      const id = requestIdRef.current++;
-      callbacksRef.current.set(id, { resolve, reject });
-      socket.send(JSON.stringify({ id, action, payload }));
-      return;
-    }
-    if (isDesktop) {
-      reject(new Error("Engine đang khởi động, vui lòng thử lại sau giây lát."));
-      return;
-    }
-    restAction(action, payload).then(resolve).catch(reject);
-  });
-
-  const connect = () => {
-    let socket;
-    try {
-      socket = new WebSocket("ws://127.0.0.1:8765");
-      socketRef.current = socket;
-      socket.onopen = () => {
-        setConnection("connected");
-        if (retryRef.current) window.clearTimeout(retryRef.current);
-        retryRef.current = null;
-        sendAction("GET_CONFIG").then((data) => {
-          setConfig(data.config || {});
-          loadDownloads();
-        }).catch((error) => notify(error.message, "error"));
-      };
-      socket.onmessage = (event) => {
-        try { handleServerMessage(JSON.parse(event.data)); } catch (error) { console.error(error); }
-      };
-      socket.onerror = () => {
-        if (isDesktop) setConnection("connecting");
-        else setConnection("rest");
-      };
-      socket.onclose = () => {
-        socketRef.current = null;
-        if (isDesktop) {
-          setConnection("connecting");
-          if (!retryRef.current) retryRef.current = window.setTimeout(() => { retryRef.current = null; connect(); }, 1000);
-        } else setConnection("rest");
-      };
-    } catch (error) {
-      if (isDesktop) retryRef.current = window.setTimeout(connect, 1000);
-      else setConnection("rest");
-    }
-  };
+  const sendAction = (action, payload = {}) => restAction(action, payload);
 
   useEffect(() => {
-    connect();
-    if (!isDesktop) {
-      loadInitialRest();
-      connectProgressWs();
-      checkVersion();
-    }
+    loadInitialRest();
+    connectProgressWs();
+    checkVersion();
     return () => {
-      if (retryRef.current) window.clearTimeout(retryRef.current);
-      socketRef.current?.close();
       progressWsRef.current?.close();
     };
   }, []);
@@ -379,8 +285,7 @@ function App() {
     {updateInfo && <div className="update-banner"><span>🚀 Có phiên bản mới <strong>v{updateInfo.latest}</strong> — <a href={updateInfo.url || repositoryUrl + "/releases/latest"} target="_blank" rel="noreferrer">Tải ngay</a></span><button onClick={() => setUpdateInfo(null)} aria-label="Đóng"><Icon name="close" size={14} /></button></div>}
     <header className="topbar">
       <div className="brand"><img className="brand-logo" src="./favicon.ico" alt="" /><div><strong>INFRABASES</strong><span>VIDEO WORKSPACE</span></div></div>
-      <a className="repo-link" href={repositoryUrl} target="_blank" rel="noreferrer" onClick={openRepository} aria-label="Mở repository GitHub" title="Mở repository GitHub"><Icon name="github" size={17} /></a>
-      {window.electronAPI && <div className="window-actions"><button onClick={() => window.electronAPI.minimize()} aria-label="Thu nhỏ" title="Thu nhỏ"><Icon name="minimize" size={14} /></button><button onClick={() => window.electronAPI.maximize()} aria-label="Phóng to" title="Phóng to"><Icon name="maximize" size={13} /></button><button onClick={() => window.electronAPI.close()} aria-label="Đóng" title="Đóng"><Icon name="close" size={14} /></button></div>}
+      <a className="repo-link" href={repositoryUrl} target="_blank" rel="noreferrer" aria-label="Mở repository GitHub" title="Mở repository GitHub"><Icon name="github" size={17} /></a>
     </header>
     <div className="layout">
       <aside className="sidebar">

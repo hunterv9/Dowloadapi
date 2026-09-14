@@ -18,9 +18,7 @@
 # Node dependencies and build output
 /node_modules/
 /dist/
-/build/
 
-# PyInstaller output — too large for git, use GitHub Releases
-/tiktok-backend.exe
-/tiktok-backend.spec
-*.exe
+# Editable-install metadata
+*.egg-info/
+/build/

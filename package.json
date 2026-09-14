@@ -1,61 +1,25 @@
 {
   "name": "tiktok-douyin-ultra-downloader",
   "version": "2.5.0",
-  "description": "Infrabases TikTok & Douyin Downloader Desktop App",
-  "main": "electron/main.js",
+  "description": "Infrabases TikTok & Douyin Downloader Web UI",
+  "private": true,
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "vite build",
-    "start": "electron .",
-    "dist:win": "electron-builder --win"
+    "build": "vite build"
   },
   "keywords": [
     "tiktok",
     "douyin",
-    "downloader",
-    "electron",
-    "desktop-app"
+    "downloader"
   ],
   "author": "Ultra Engine Team",
   "license": "MIT",
   "dependencies": {
-    "electron-updater": "^6.3.9",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "electron": "^30.0.0",
-    "electron-builder": "^26.15.3",
     "vite": "^5.4.8"
-  },
-  "build": {
-    "appId": "com.ultra.tiktokdownloader",
-    "productName": "Infrabases",
-    "publish": {
-      "provider": "github",
-      "owner": "hunterv9",
-      "repo": "Dowloadapi"
-    },
-    "asarUnpack": [
-      "desktop/**",
-      "core/**",
-      "tiktok-backend.exe"
-    ],
-    "extraResources": [
-      {
-        "from": "dist/tiktok-backend.exe",
-        "to": "app.asar.unpacked/tiktok-backend.exe"
-      }
-    ],
-    "win": {
-      "target": "nsis"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    }
   }
 }
