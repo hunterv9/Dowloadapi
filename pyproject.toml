@@ -13,7 +13,8 @@ authors = [{ name = "Ultra Engine Team" }]
 keywords = ["tiktok", "douyin", "downloader", "fastapi"]
 dependencies = [
     "fastapi>=0.115.0",
-    "uvicorn>=0.30.0",
+    "uvicorn[standard]>=0.30.0",
+    "orjson>=3.10.0",
     "rich>=13.7.0",
     "requests>=2.31.0",
 ]
