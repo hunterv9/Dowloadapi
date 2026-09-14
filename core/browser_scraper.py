@@ -6,6 +6,8 @@ Falls back gracefully when Playwright is not installed.
 
 import re
 import sys
+import time
+import random
 import logging
 from pathlib import Path
 from typing import List, Optional
@@ -16,6 +18,50 @@ __all__ = ["BrowserScraper"]
 
 # Persist browser session (cookies, localStorage) between runs
 _BROWSER_DATA_DIR = Path(__file__).parent.parent / ".browser_data"
+
+# Realistic user agents for rotation
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+]
+
+# Stealth JS to inject before page load — defeats common bot-detection signals
+_STEALTH_JS = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+Object.defineProperty(navigator, 'language', {get: () => 'en-US'});
+Object.defineProperty(navigator, 'plugins', {
+    get: () => {
+        const plugins = [
+            {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format'},
+            {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: ''},
+            {name: 'Native Client', filename: 'internal-nacl-plugin', description: ''},
+        ];
+        plugins.length = 3;
+        return plugins;
+    }
+});
+window.chrome = window.chrome || {};
+window.chrome.runtime = window.chrome.runtime || {};
+const originalQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (parameters) =>
+    parameters.name === 'notifications'
+        ? Promise.resolve({ state: Notification.permission })
+        : originalQuery(parameters);
+const getParameter = WebGLRenderingContext.prototype.getParameter;
+WebGLRenderingContext.prototype.getParameter = function(parameter) {
+    if (parameter === 37445) return 'Intel Inc.';
+    if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+    return getParameter.apply(this, arguments);
+};
+delete navigator.__proto__.webdriver;
+if (navigator.connection) {
+    Object.defineProperty(navigator.connection, 'rtt', {get: () => 50});
+}
+"""
 
 
 class BrowserScraper:
@@ -71,6 +117,7 @@ class BrowserScraper:
         max_videos: int = 50,
         timeout_ms: int = 30000,
         headless: bool = True,
+        proxy: Optional[str] = None,
     ) -> List[str]:
         """Open profile in Chromium, scroll, extract video URLs.
 
@@ -87,122 +134,138 @@ class BrowserScraper:
 
         video_ids: List[str] = []
         seen: set = set()
+        ua = random.choice(_USER_AGENTS)
 
-        try:
-            with sync_playwright() as p:
-                _BROWSER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        for attempt in range(3):
+            try:
+                with sync_playwright() as p:
+                    _BROWSER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-                # Use persistent context to keep cookies between runs
-                context = p.chromium.launch_persistent_context(
-                    user_data_dir=str(_BROWSER_DATA_DIR),
-                    headless=headless,
-                    args=[
+                    launch_args = [
                         "--disable-blink-features=AutomationControlled",
                         "--disable-features=IsolateOrigins,site-per-process",
                         "--no-sandbox",
-                    ],
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/124.0.0.0 Safari/537.36"
-                    ),
-                    viewport={"width": 1920, "height": 1080},
-                    locale="en-US",
-                    java_script_enabled=True,
-                )
-                # Remove webdriver flag
-                context.add_init_script("""
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-                """)
-                page = context.new_page()
+                    ]
 
-                # Block heavy resources to speed up
-                page.route(
-                    re.compile(r"\.(png|jpg|jpeg|gif|svg|mp4|webm|woff2?)$"),
-                    lambda route: route.abort(),
-                )
+                    proxy_settings = None
+                    if proxy:
+                        proxy_settings = {"server": proxy}
 
-                page.goto(profile_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                    context = p.chromium.launch_persistent_context(
+                        user_data_dir=str(_BROWSER_DATA_DIR),
+                        headless=headless,
+                        args=launch_args,
+                        proxy=proxy_settings,
+                        user_agent=ua,
+                        viewport={"width": 1920, "height": 1080},
+                        locale="en-US",
+                        java_script_enabled=True,
+                        ignore_default_args=["--enable-automation"],
+                    )
 
-                # Detect CAPTCHA and wait for user to solve it (headed mode only)
-                if not headless:
+                    context.add_init_script(_STEALTH_JS)
+                    page = context.new_page()
+
+                    # Block heavy resources to speed up
+                    page.route(
+                        re.compile(r"\.(png|jpg|jpeg|gif|svg|mp4|webm|woff2?)$"),
+                        lambda route: route.abort(),
+                    )
+
+                    # Extra webdriver evasion via CDP
+                    try:
+                        cdp = context.new_cdp_session(page)
+                        cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+                            "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+                        })
+                    except Exception:
+                        pass
+
+                    page.goto(profile_url, wait_until="domcontentloaded", timeout=timeout_ms)
+
+                    # Detect CAPTCHA / verification
+                    captcha_detected = False
                     captcha_selectors = [
                         'text="Drag the slider"',
+                        'text="Verify to continue"',
                         'text="Log in"',
                         '[class*="captcha"]',
                         '[class*="verify"]',
                         '#captcha-verify-image',
+                        'text="Slide to verify"',
+                        'text="Security check"',
                     ]
                     for sel in captcha_selectors:
                         try:
                             if page.query_selector(sel):
-                                _log.info("CAPTCHA detected — solve it in the browser window")
-                                # Wait up to 60s for CAPTCHA to disappear
-                                page.wait_for_timeout(60000)
+                                captcha_detected = True
                                 break
                         except Exception:
                             pass
 
-                # Wait for video elements to appear
-                try:
-                    page.wait_for_selector(
-                        'a[href*="/video/"], [data-e2e="user-post-item"]',
-                        timeout=15000,
-                    )
-                except Exception:
-                    _log.warning("No video elements found after page load")
+                    if captcha_detected and not headless:
+                        _log.info("CAPTCHA detected — solve it in the browser window")
+                        page.wait_for_timeout(60000)
+                    elif captcha_detected:
+                        _log.warning("CAPTCHA detected in headless mode, retrying")
+                        context.close()
+                        ua = random.choice(_USER_AGENTS)
+                        time.sleep(2 * (attempt + 1))
+                        continue
 
-                # Scroll to load more videos
-                prev_count = 0
-                scroll_attempts = 0
-                max_scrolls = max(3, max_videos // 6)
+                    # Wait for video elements to appear
+                    try:
+                        page.wait_for_selector(
+                            'a[href*="/video/"], [data-e2e="user-post-item"]',
+                            timeout=15000,
+                        )
+                    except Exception:
+                        _log.warning("No video elements found after page load")
 
-                while len(video_ids) < max_videos and scroll_attempts < max_scrolls:
-                    scroll_attempts += 1
+                    # Scroll to load more videos
+                    prev_count = 0
+                    scroll_attempts = 0
+                    max_scrolls = max(3, max_videos // 6)
 
-                    # Extract video IDs from current page
-                    links = page.query_selector_all('a[href*="/video/"]')
-                    for link in links:
-                        href = link.get_attribute("href") or ""
-                        match = re.search(r"/video/(\d+)", href)
-                        if match:
-                            vid = match.group(1)
-                            if vid not in seen:
-                                seen.add(vid)
-                                video_ids.append(vid)
-                            if len(video_ids) >= max_videos:
-                                break
+                    while len(video_ids) < max_videos and scroll_attempts < max_scrolls:
+                        scroll_attempts += 1
 
-                    if len(video_ids) >= max_videos:
-                        break
+                        links = page.query_selector_all('a[href*="/video/"]')
+                        for link in links:
+                            href = link.get_attribute("href") or ""
+                            match = re.search(r"/video/(\d+)", href)
+                            if match:
+                                vid = match.group(1)
+                                if vid not in seen:
+                                    seen.add(vid)
+                                    video_ids.append(vid)
+                                if len(video_ids) >= max_videos:
+                                    break
 
-                    # Check if new videos loaded
-                    if len(video_ids) == prev_count and scroll_attempts > 2:
-                        break
-                    prev_count = len(video_ids)
+                        if len(video_ids) >= max_videos:
+                            break
 
-                    # Scroll down
-                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    page.wait_for_timeout(1500)
+                        if len(video_ids) == prev_count and scroll_attempts > 2:
+                            break
+                        prev_count = len(video_ids)
 
-                context.close()
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        page.wait_for_timeout(random.randint(1200, 2500))
 
-        except Exception as e:
-            _log.warning("Browser scraping failed: %s", e)
+                    context.close()
+
+                # Got results, return immediately
+                if video_ids:
+                    break
+
+            except Exception as e:
+                _log.warning("Browser scraping attempt %d failed: %s", attempt + 1, e)
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    ua = random.choice(_USER_AGENTS)
 
         # Build URLs
         username_match = re.search(r"@([a-zA-Z0-9_.\-]+)", profile_url)
         username = username_match.group(1) if username_match else ""
-
-        # Detect platform
-        if "douyin.com" in profile_url:
-            base = "https://www.douyin.com"
-        else:
-            base = "https://www.tiktok.com"
-
-        return [
-            f"{base}/@{username}/video/{vid}"
-            for vid in video_ids[:max_videos]
-        ]
+        base = "https://www.douyin.com" if "douyin.com" in profile_url else "https://www.tiktok.com"
+        return [f"{base}/@{username}/video/{vid}" for vid in video_ids[:max_videos]]

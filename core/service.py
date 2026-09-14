@@ -18,6 +18,40 @@ from .profile_scraper import ProfileScraper
 
 _log = logging.getLogger(__name__)
 
+
+def friendly_error(exc: Exception, context: str = "") -> str:
+    """Convert technical exceptions into user-friendly Vietnamese messages."""
+    msg = str(exc).lower()
+    raw = str(exc)
+
+    if "invalid url" in msg or "not a valid" in msg or "unsupported url" in msg:
+        return "Link không hợp lệ. Hãy kiểm tra lại đường dẫn TikTok hoặc Douyin."
+    if "private" in msg or "login" in msg or "403" in msg:
+        return "Video này ở chế độ riêng tư hoặc yêu cầu đăng nhập. Thử nhập cookie trong mục Cấu hình."
+    if "not found" in msg or "404" in msg or "removed" in msg:
+        return "Video không tồn tại hoặc đã bị xóa."
+    if "timeout" in msg or "timed out" in msg:
+        return "Kết nối quá chậm hoặc server không phản hồi. Thử lại sau."
+    if "connection" in msg or "network" in msg or "dns" in msg:
+        return "Không thể kết nối mạng. Kiểm tra lại kết nối internet."
+    if "rate limit" in msg or "429" in msg or "too many" in msg:
+        return "Bạn đang tải quá nhanh. Chờ vài giây rồi thử lại."
+    if "geo" in msg or "region" in msg or "blocked" in msg:
+        return "Video bị chặn theo khu vực. Thử dùng VPN."
+    if "cookie" in msg:
+        return "Cookie không hợp lệ hoặc đã hết hạn. Cập nhật lại trong mục Cấu hình."
+    if "disk" in msg or "space" in msg or "no space" in msg:
+        return "Không đủ dung lượng ổ cứng. Giải phóng bộ nhớ rồi thử lại."
+    if "permission" in msg or "access denied" in msg:
+        return "Không có quyền ghi file. Kiểm tra quyền thư mục lưu trữ."
+
+    return f"Đã xảy ra lỗi: {raw[:120]}" if len(raw) > 120 else f"Đã xảy ra lỗi: {raw}"
+
+
+# Backward-compatible name used by the Web and CLI routing layers.
+_friendly_error = friendly_error
+
+
 # ── Shared instances ─────────────────────────────────────────────────────────
 cookie_mgr = CookieManager()
 downloader = TikTokDownloader(cookie_mgr)

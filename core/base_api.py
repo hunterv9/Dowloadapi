@@ -231,9 +231,15 @@ class BasePlatformAPI:
         for attempt in range(max_retries):
             try:
                 resp = self.session.request(method, url, **kwargs)
-                if resp.status_code < 500:
+                if resp.status_code >= 500:
+                    last_exc = Exception(f"HTTP {resp.status_code}")
+                elif resp.status_code == 429:
+                    last_exc = Exception("HTTP 429")
+                elif resp.status_code >= 400:
+                    # ponytail: ceiling=4xx fail fast no retry; upgrade path=retry-after/backoff for 429 only.
+                    raise Exception(f"HTTP {resp.status_code}")
+                else:
                     return resp
-                last_exc = Exception(f"HTTP {resp.status_code}")
             except requests.exceptions.SSLError as e:
                 last_exc = e
                 _log.warning("SSL error on attempt %d, recreating session: %s", attempt + 1, e)
@@ -293,19 +299,13 @@ class BasePlatformAPI:
         """Scrape a profile for video URLs (up to *max_videos*).
 
         Strategy (in order):
-          1. yt-dlp — handles playlist extraction and anti-bot logic
-          2. Headless browser (Playwright) — renders JS, bypasses WAF
-          3. HTML regex + embedded JSON — last resort (platform-specific)
+          1. Headless browser (Playwright) — renders JS, bypasses WAF
+          2. HTML regex + embedded JSON — last resort (platform-specific)
         """
         profile_url = self.resolve_shortlink(profile_url, self.SHORT_MARKERS)
         limit = max_videos or None  # 0 → unlimited
 
-        # --- 1. yt-dlp ---
-        urls = self._scrape_via_ytdlp(profile_url, limit)
-        if urls:
-            return urls
-
-        # --- 2. Headless browser ---
+        # --- 1. Headless browser ---
         from .browser_scraper import BrowserScraper
         fallback = limit or 50
         if not BrowserScraper.is_available():
@@ -331,77 +331,8 @@ class BasePlatformAPI:
                 "Không thể cài đặt Playwright. Chạy 'pip install playwright && playwright install chromium' để bật tính năng quét profile tự động."
             )
 
-        # --- 3. HTML fallback (platform-specific) ---
+        # --- 2. HTML fallback (platform-specific) ---
         return self._scrape_via_html(profile_url, fallback)
-
-    def _scrape_via_ytdlp(
-        self, profile_url: str, max_videos: Optional[int]
-    ) -> List[str]:
-        """Use yt-dlp to list video URLs from a profile (handles anti-bot)."""
-        import os
-        import time
-        try:
-            import yt_dlp
-        except ImportError:
-            _log.warning("yt-dlp not installed, falling back to HTML scraping")
-            return []
-
-        # Suppress yt-dlp's direct stderr prints (e.g. "Unable to extract
-        # secondary user ID") which bypass the quiet/logger settings.
-        _orig_stderr = None
-        try:
-            _orig_stderr = os.dup(2)
-            os.dup2(os.open(os.devnull, os.O_WRONLY), 2)
-        except OSError:
-            _orig_stderr = None
-
-        ydl_opts: Dict[str, Any] = {
-            "quiet": True,
-            "no_warnings": True,
-            "extract_flat": "in_playlist",
-            "ignoreerrors": True,
-            "socket_timeout": 30,
-            "geo_bypass": True,
-            "no_check_certificates": True,
-        }
-        if max_videos:
-            ydl_opts["playlistend"] = max_videos
-        if self.cookie_string:
-            ydl_opts["cookiefile"] = None
-            ydl_opts["http_headers"] = {"Cookie": self.cookie_string}
-
-        try:
-            for attempt in range(3):
-                try:
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(profile_url, download=False)
-                    if not info or "entries" not in info:
-                        return []
-                    urls = []
-                    for entry in info["entries"]:
-                        if not entry:
-                            continue
-                        url = entry.get("webpage_url") or entry.get("url")
-                        if url:
-                            urls.append(url)
-                        if max_videos and len(urls) >= max_videos:
-                            break
-                    if urls:
-                        return urls
-                except Exception as e:
-                    _log.warning("yt-dlp attempt %d failed: %s", attempt + 1, e)
-                if attempt < 2:
-                    time.sleep(2 * (attempt + 1))
-            return []
-        finally:
-            # Restore stderr
-            if _orig_stderr is not None:
-                try:
-                    os.close(2)
-                    os.dup2(_orig_stderr, 2)
-                    os.close(_orig_stderr)
-                except OSError:
-                    pass
 
     def _scrape_via_html(self, profile_url: str, max_videos: int) -> List[str]:
         """Platform-specific HTML fallback. Subclasses must override."""

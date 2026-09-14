@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core import service
+from core.service import _friendly_error
 
 _log = logging.getLogger(__name__)
 
@@ -35,35 +36,6 @@ _log = logging.getLogger(__name__)
 _CURRENT_VERSION = "2.5.0"
 _GITHUB_REPO = "hunterv9/Dowloadapi"
 
-
-def _friendly_error(exc: Exception, context: str = "") -> str:
-    """Convert technical exceptions into user-friendly Vietnamese messages."""
-    msg = str(exc).lower()
-    raw = str(exc)
-
-    if "invalid url" in msg or "not a valid" in msg or "unsupported url" in msg:
-        return "Link không hợp lệ. Hãy kiểm tra lại đường dẫn TikTok hoặc Douyin."
-    if "private" in msg or "login" in msg or "403" in msg:
-        return "Video này ở chế độ riêng tư hoặc yêu cầu đăng nhập. Thử nhập cookie trong mục Cấu hình."
-    if "not found" in msg or "404" in msg or "removed" in msg:
-        return "Video không tồn tại hoặc đã bị xóa."
-    if "timeout" in msg or "timed out" in msg:
-        return "Kết nối quá chậm hoặc server không phản hồi. Thử lại sau."
-    if "connection" in msg or "network" in msg or "dns" in msg:
-        return "Không thể kết nối mạng. Kiểm tra lại kết nối internet."
-    if "rate limit" in msg or "429" in msg or "too many" in msg:
-        return "Bạn đang tải quá nhanh. Chờ vài giây rồi thử lại."
-    if "geo" in msg or "region" in msg or "blocked" in msg:
-        return "Video bị chặn theo khu vực. Thử dùng VPN."
-    if "cookie" in msg:
-        return "Cookie không hợp lệ hoặc đã hết hạn. Cập nhật lại trong mục Cấu hình."
-    if "disk" in msg or "space" in msg or "no space" in msg:
-        return "Không đủ dung lượng ổ cứng. Giải phóng bộ nhớ rồi thử lại."
-    if "permission" in msg or "access denied" in msg:
-        return "Không có quyền ghi file. Kiểm tra quyền thư mục lưu trữ."
-
-    # Generic fallback — keep it short
-    return f"Đã xảy ra lỗi: {raw[:120]}" if len(raw) > 120 else f"Đã xảy ra lỗi: {raw}"
 
 # ── App setup ────────────────────────────────────────────────────────────────
 
@@ -82,22 +54,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ── Localhost-only guard ──────────────────────────────────────────────────────
-_ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
-
-
-@app.middleware("http")
-async def _localhost_only(request: Request, call_next):
-    """Reject requests from non-localhost clients (LAN protection)."""
-    host = request.headers.get("host", "").split(":")[0]
-    client_ip = request.client.host if request.client else ""
-    if host not in _ALLOWED_HOSTS and client_ip not in _ALLOWED_HOSTS:
-        return JSONResponse(
-            status_code=403,
-            content={"detail": "Chỉ cho phép truy cập từ localhost. Ứng dụng không hỗ trợ truy cập từ mạng ngoài."},
-        )
-    return await call_next(request)
 
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)

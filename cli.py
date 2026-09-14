@@ -19,26 +19,10 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, Downlo
 from core.cookie_manager import CookieManager
 from core.downloader import TikTokDownloader
 from core.profile_scraper import ProfileScraper
+from core.service import _friendly_error as _cli_friendly_error
 
 console = Console()
 
-
-def _cli_friendly_error(exc: Exception) -> str:
-    """Convert technical exceptions into user-friendly Vietnamese messages."""
-    msg = str(exc).lower()
-    if "invalid url" in msg or "not a valid" in msg or "unsupported url" in msg:
-        return "Link không hợp lệ. Kiểm tra lại đường dẫn TikTok hoặc Douyin."
-    if "private" in msg or "login" in msg or "403" in msg:
-        return "Video ở chế độ riêng tư hoặc yêu cầu đăng nhập."
-    if "not found" in msg or "404" in msg:
-        return "Video không tồn tại hoặc đã bị xóa."
-    if "timeout" in msg or "timed out" in msg:
-        return "Kết nối quá chậm. Thử lại sau."
-    if "connection" in msg or "network" in msg:
-        return "Không thể kết nối mạng. Kiểm tra internet."
-    if "rate limit" in msg or "429" in msg:
-        return "Tải quá nhanh. Chờ vài giây rồi thử lại."
-    return str(exc)
 
 def print_banner():
     banner_text = r"""[bold cyan]

@@ -23,6 +23,7 @@ class CookieManager:
             "download_dir": str(Path(__file__).parent.parent / "downloads"),
             "video_quality": "hd",
             "save_metadata": True,
+            "proxy": "",
         }
         if CONFIG_FILE.exists():
             try:
@@ -44,3 +45,8 @@ class CookieManager:
     def get_active_cookie_string(self, domain: str = "tiktok.com") -> str:
         """Return the active cookie string from manual input."""
         return self.config.get("custom_cookie_string", "").strip()
+
+    # -- proxy helpers -------------------------------------------------------
+    def get_proxy(self) -> str:
+        """Return the configured proxy URL, or empty string if not set."""
+        return self.config.get("proxy", "").strip()
