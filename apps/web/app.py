@@ -7,9 +7,9 @@ import sys
 from pathlib import Path
 
 # Ensure project root is on sys.path so `from core import …` works
-# regardless of whether the app is launched as `python web/app.py`
-# or `python -m web.app`.
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# regardless of whether the app is launched as `python apps/web/app.py`,
+# `python -m apps.web.app` or via the installed console script.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
@@ -393,6 +393,11 @@ async def api_delete_download(req: DeleteFileRequest):
     return {"success": True, "message": "Đã xóa file thành công"}
 
 
-if __name__ == "__main__":
+def main(host: str = "127.0.0.1", port: int = 8000) -> None:
+    """Entry point for `python apps/web/app.py` and the `tikdl-web` console script."""
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    main()

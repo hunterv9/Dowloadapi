@@ -73,7 +73,14 @@ def test_tiktok_scrape_profile_urls():
         '</script>'
     )
     api.session.get = mock.Mock(return_value=_FakeResp(html))
-    urls = api.scrape_profile_urls("https://www.tiktok.com/@tony", max_videos=50)
+
+    # Keep the test hermetic: force the HTML fallback (no real Playwright/Chromium)
+    with mock.patch(
+        "core.browser_scraper.BrowserScraper.is_available", return_value=False
+    ), mock.patch(
+        "core.browser_scraper.BrowserScraper.install_browser", return_value=False
+    ):
+        urls = api.scrape_profile_urls("https://www.tiktok.com/@tony", max_videos=50)
     ids = [u.rsplit("/", 1)[-1] for u in urls]
     assert "1" in ids and "2" in ids
 
@@ -86,44 +93,41 @@ def test_tiktok_collects_embedded_profile_items():
     assert ids == ["123", "456"]
 
 
-def test_tiktok_profile_api_resolves_sec_uid():
-    api = TikTokAPI()
-
-    # Mock yt-dlp to return video URLs
-    mock_ydl = mock.MagicMock()
-    mock_ydl.__enter__ = mock.Mock(return_value=mock_ydl)
-    mock_ydl.__exit__ = mock.Mock(return_value=False)
-    mock_ydl.extract_info.return_value = {
-        "entries": [{
-            "url": "789",
-            "webpage_url": "https://www.tiktok.com/@creator/video/789",
-        }]
-    }
-
-    with mock.patch("yt_dlp.YoutubeDL", return_value=mock_ydl):
-        urls = api.scrape_profile_urls("https://www.tiktok.com/@creator", max_videos=5)
-
-    assert urls == ["https://www.tiktok.com/@creator/video/789"]
-
-
-def test_tiktok_profile_browser_failure_uses_fallback():
+def test_tiktok_profile_browser_strategy_returns_urls():
+    """When Playwright is available, scrape_profile_urls uses the browser strategy."""
     api = TikTokAPI()
 
     with mock.patch(
         "core.browser_scraper.BrowserScraper.is_available", return_value=True
     ), mock.patch(
         "core.browser_scraper.BrowserScraper.scrape_profile",
-        side_effect=RuntimeError("browser unavailable"),
-    ), mock.patch.object(
-        api,
-        "_scrape_via_ytdlp",
         return_value=["https://www.tiktok.com/@creator/video/789"],
+    ) as mock_browser:
+        urls = api.scrape_profile_urls("https://www.tiktok.com/@creator", max_videos=5)
+
+    mock_browser.assert_called_once_with(
+        "https://www.tiktok.com/@creator", 5, headless=True
+    )
+    assert urls == ["https://www.tiktok.com/@creator/video/789"]
+
+
+def test_tiktok_profile_browser_failure_uses_html_fallback():
+    """Browser errors must fall back to the HTML/JSON strategy."""
+    api = TikTokAPI()
+    html = '<div><a href="/video/7">a</a></div>'
+    api.session.get = mock.Mock(return_value=_FakeResp(html))
+
+    with mock.patch(
+        "core.browser_scraper.BrowserScraper.is_available", return_value=True
+    ), mock.patch(
+        "core.browser_scraper.BrowserScraper.scrape_profile",
+        side_effect=RuntimeError("browser unavailable"),
     ):
         urls = api.scrape_profile_urls(
             "https://www.tiktok.com/@creator", max_videos=5
         )
 
-    assert urls == ["https://www.tiktok.com/@creator/video/789"]
+    assert urls == ["https://www.tiktok.com/@creator/video/7"]
 
 
 def test_download_subtitles_writes_srt(tmp_path):

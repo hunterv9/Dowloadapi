@@ -1,6 +1,7 @@
 import os
 import sys
 import subprocess
+from pathlib import Path
 
 # Ensure UTF-8 console output on Windows
 if sys.platform == "win32":
@@ -9,6 +10,12 @@ if sys.platform == "win32":
         sys.stderr.reconfigure(encoding="utf-8")
     except Exception:
         pass
+
+# Ensure project root is on sys.path so `from core import …` works
+# regardless of where the CLI is launched from (also required for `python -m apps.cli`).
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from rich.console import Console
 from rich.table import Table
@@ -195,9 +202,9 @@ def main():
             console.print("[dim]Nhấn Ctrl+C trong terminal này để dừng server.[/dim]")
             try:
                 proc = subprocess.Popen(
-                    [sys.executable, "-m", "uvicorn", "web.app:app",
+                    [sys.executable, "-m", "uvicorn", "apps.web.app:app",
                      "--host", "127.0.0.1", "--port", "8080"],
-                    cwd=os.path.dirname(os.path.abspath(__file__)),
+                    cwd=str(_PROJECT_ROOT),
                 )
                 proc.wait()
             except KeyboardInterrupt:
