@@ -31,14 +31,10 @@ curl -X POST http://127.0.0.1:8000/api/download-single -H "Content-Type: applica
 curl http://127.0.0.1:8000/api/task-status/<task_id>
 ```
 
-> Tất cả `/api/*` và `/downloaded-media/*` yêu cầu header `X-API-Key` khi biến môi trường `API_KEY` được đặt. `GET /` (health check) luôn public. Rate limit mặc định 100 req/60s/IP (chỉnh qua `RATE_LIMIT_REQUESTS`/`RATE_LIMIT_WINDOW`).
 
-## 🔒 Bảo Mật
-- **API key** (tùy chọn): đặt `API_KEY` env để yêu cầu header `X-API-Key` trên mọi `/api/*` và `/downloaded-media/*`.
-- **Rate limiting**: sliding window theo IP (mặc định 100 req/60s, chỉnh `RATE_LIMIT_REQUESTS`/`RATE_LIMIT_WINDOW`). Lưu ý: in-memory theo process — multi-worker cần sticky routing hoặc store chung.
-- **Security headers**: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection`.
-- **URL allow-list**: chỉ chấp nhận domain TikTok/Douyin hợp lệ (`core/url_validator.py`); lỗi trả về typed errors (`core/exceptions.py`).
+## ⚙️ Ghi Chú Vận Hành
 - API serve file kiểm tra **đường dẫn phải nằm trong thư mục downloads** (chống path traversal).
+- Bảo mật (auth, rate limit, WAF) do services phía trước xử lý — service này chỉ xử lý request.
 - `downloads/`, `.browser_data/`, `.env`, môi trường Python và file bytecode local được Git bỏ qua.
 - `config.json` có thể chứa cookie và đường dẫn local; không commit cookie thật lên repository.
 
@@ -119,7 +115,7 @@ apps/                          ← Entry points
   cli.py                       # Giao diện dòng lệnh (Rich menu)
   web/app.py                   # Pure API server (FastAPI) — 5 endpoint
 
-core/                          ← Logic chính (11 file + __init__)
+core/                          ← Logic chính (10 file + __init__)
   base_api.py                  # HTTP chung, download stream, retry, subtitle
   tiktok_api.py                # Trích video info từ TikTok
   douyin_api.py                # Trích video info từ Douyin
@@ -129,7 +125,6 @@ core/                          ← Logic chính (11 file + __init__)
   browser_scraper.py           # Playwright scraper (anti-detection)
   service.py                   # ★ Logic chung — CLI và API đều gọi vào đây
   stealth.py                   # Fingerprint masking cho browser headless
-  url_validator.py             # Validate URL TikTok/Douyin (allow-list)
   exceptions.py                # Typed errors (ValidationError, AuthError, ...)
 
 scripts/bench.py               # Load benchmark (aiohttp)

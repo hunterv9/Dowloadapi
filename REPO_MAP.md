@@ -1,4 +1,4 @@
-# REPO MAP — Dowloadapi (updated: 2026-09-15)
+# REPO MAP — Dowloadapi (updated: 2026-09-16)
 
 ## What this system does
 Commercial pure REST API (FastAPI) for TikTok & Douyin video downloads, plus a Rich CLI. Core engine extracts direct CDN stream URLs from embedded HTML/JSON payloads, downloads videos, captions, and metadata. Supports single video download with async task tracking, downloaded-file serving, and (via CLI) batch profile download.
@@ -30,18 +30,17 @@ Commercial pure REST API (FastAPI) for TikTok & Douyin video downloads, plus a R
 | `core/service.py` | **Shared business logic** — single source of truth for CLI + API | `profile_scraper.py`, `downloader.py`, `cookie_manager.py` | `apps/web/app.py`, `apps/cli.py` |
 | `core/cookie_manager.py` | Load/save `config.json` (root-relative path), provide active cookie string | (stdlib only) | everywhere |
 | `core/stealth.py` | Browser fingerprint masking for headless Chromium | playwright | `browser_scraper.py` |
-| `core/url_validator.py` | Strict TikTok/Douyin URL allow-list validation | stdlib | `downloader.py`, `service.py` |
 | `core/exceptions.py` | Typed errors: ValidationError/AuthError/NotFoundError/RateLimitError/PlatformError | stdlib | `service.py`, `base_api.py` |
-| `apps/web/app.py` | **Pure API** — 5 REST routes, ORJSONResponse, TTL-cached downloads listing, background task tracking + periodic cleanup, thread-offloaded blocking I/O, API-key auth + rate limiting + security headers | `core/service.py` | API consumers |
+| `apps/web/app.py` | **Pure API** — 5 REST routes, ORJSONResponse, TTL-cached downloads listing, background task tracking + periodic cleanup, thread-offloaded blocking I/O | `core/service.py` | API consumers |
 | `apps/cli.py` | Rich CLI menu: single download, batch, settings, launch web | `core/service.py` (+ direct `CookieManager`, `TikTokDownloader`, `ProfileScraper`) | user |
 | `scripts/bench.py` | aiohttp load benchmark (BENCH_BASE env, default :8000) | aiohttp (dev extra) | dev |
 | `pyproject.toml` | Package metadata, deps, extras (`browser`, `dev`), console scripts `tikdl-cli` / `tikdl-web` | setuptools | pip/CI |
 
-## API surface (6 routes; `GET /` is public, all `/api/*` + `/downloaded-media/*` require `X-API-Key` when `API_KEY` env is set)
+## API surface (6 routes; no auth — auth/rate-limit handled by upstream services)
 
 | Method | Route | Notes |
 |--------|-------|-------|
-| GET | `/` | Health check (no auth) |
+| GET | `/` | Health check |
 | POST | `/api/video-info` | `analyze_video` offloaded to worker thread |
 | POST | `/api/download-single` | BackgroundTasks threadpool; returns `task_id` |
 | GET | `/api/task-status/{task_id}` | In-memory dict lookup (fastest path) |
@@ -52,7 +51,6 @@ Multi-worker: `WEB_WORKERS=N` (entry point) or `uvicorn --workers N` / gunicorn+
 
 ## Known issues / improvement backlog
 1. **Douyin profile pagination**: the `while has_more` loop in `douyin_api.py:_scrape_via_html` can make unbounded requests when `msToken` is missing. Needs (a) hard input caps, (b) proxy rotation, or (c) honest error messaging.
-2. **Rate limiting is per-process in-memory** (RATE_LIMIT_REQUESTS/RATE_LIMIT_WINDOW, default 100/60s sliding window): fine single-process; for multi-worker use a shared store (Redis) or sticky routing.
 3. **In-memory task store**: multi-worker deployments cannot poll tasks across workers (see note above). Move to Redis/DB for horizontal scaling.
 4. **Remaining edge cases**: concurrent download stress, CLI flows, Douyin pagination caps under missing msToken.
 
@@ -68,7 +66,7 @@ tests/
   test_profile_scraper.py  (11) — URL normalization, file detection, archive dedup, batch
   test_service.py          (17) — friendly_error, safe_media_path, video-info cache
   test_stealth.py          (12) — stealth fingerprint masking
-  test_web_app.py          (16) — health, auth, downloads cache, task-status, media serving
+  test_web_app.py          (...) — health, downloads validation, task-status, media serving
   ─────────────────────────────
   ~140 tests collected (parametrized; 119 test functions)
 ```
@@ -91,5 +89,4 @@ Client and server shared one CPU during measurement; dedicated Linux servers wit
 
 ## Open unknowns
 - `config.json` download_dir is an absolute local path; runtime-only, not portable across machines.
-- `API_KEY` auth is optional (enabled when `API_KEY` env is set); rate limiting is per-process in-memory — add Redis/shared store before public exposure at scale.
 

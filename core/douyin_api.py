@@ -16,10 +16,8 @@ from .base_api import (
     PC_USER_AGENT,
 )
 from .exceptions import NotFoundError, ValidationError
-from .url_validator import validate_url
 
 __all__ = ["DouyinAPI"]
-
 
 class DouyinAPI(BasePlatformAPI):
     """100% Official direct Douyin engine — clean & isolated module."""
@@ -50,8 +48,6 @@ class DouyinAPI(BasePlatformAPI):
         else:
             url = self.resolve_shortlink(url, self.SHORT_MARKERS)
             video_id = video_id or self.extract_video_id(url)
-
-        validate_url(url)
         if not video_id:
             raise ValidationError("Không thể nhận diện ID video Douyin từ liên kết.")
 
@@ -125,7 +121,6 @@ class DouyinAPI(BasePlatformAPI):
 
     def _scrape_via_html(self, profile_url: str, max_videos: int) -> List[str]:
         """Fallback: extract video IDs from HTML + embedded JSON."""
-        validate_url(profile_url)
         headers = self._headers(
             user_agent=PC_USER_AGENT,
             accept_language=self.ACCEPT_LANGUAGE,

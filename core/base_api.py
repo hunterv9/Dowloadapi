@@ -23,7 +23,6 @@ import requests
 
 from . import stealth as _stealth
 from .exceptions import AuthError, NotFoundError, PlatformError, RateLimitError
-from .url_validator import validate_url, validate_stream_url
 
 _log = logging.getLogger(__name__)
 
@@ -43,13 +42,11 @@ _SUBTITLE_KEYS = (
     "srt_info",
 )
 
-
 def sanitize_filename(name: str, max_length: int = 100) -> str:
     """Strip characters that are illegal on Windows/Unix and collapse spaces."""
     clean = re.sub(r'[\\/*?:"<>|]', "", name or "")
     clean = re.sub(r"\s+", " ", clean).strip()
     return clean[:max_length]
-
 
 class BasePlatformAPI:
     """Abstract base for a platform-specific (TikTok / Douyin) API client."""
@@ -139,11 +136,9 @@ class BasePlatformAPI:
         input when the request fails.
         """
         raw_url = raw_url.strip()
-        validate_url(raw_url)
         if any(marker in raw_url for marker in short_markers):
             try:
                 r = self.session.head(raw_url, allow_redirects=True, timeout=10)
-                validate_url(r.url)
                 return r.url.split("?")[0]
             except Exception:
                 pass
@@ -251,7 +246,6 @@ class BasePlatformAPI:
         * other 4xx fail fast (retrying them only burns quota and flags us).
         On SSL errors the session is recreated to get a fresh TLS handshake.
         """
-        validate_url(url)
         kwargs.setdefault("timeout", 15)
         bucket = self._bucket_for(url)
         last_exc = None
@@ -308,7 +302,6 @@ class BasePlatformAPI:
         progress_callback: Optional[Callable[[int, int, float], None]] = None,
     ) -> str:
         """Stream a media file to disk in 64KB chunks, reporting progress."""
-        validate_stream_url(download_url)
         headers = self._headers(user_agent=IPHONE_USER_AGENT, referer=self.REFERER)
         headers["Range"] = "bytes=0-"
 

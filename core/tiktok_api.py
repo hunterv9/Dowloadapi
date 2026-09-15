@@ -16,10 +16,8 @@ from .base_api import (
     PC_USER_AGENT,
 )
 from .exceptions import AuthError, NotFoundError, PlatformError, RateLimitError
-from .url_validator import validate_url
 
 __all__ = ["TikTokAPI"]
-
 
 class TikTokAPI(BasePlatformAPI):
     """100% Official direct TikTok engine — zero 3rd party dependencies."""
@@ -57,8 +55,6 @@ class TikTokAPI(BasePlatformAPI):
         else:
             url = self.resolve_shortlink(url, self.SHORT_MARKERS)
             video_id = video_id or self.extract_video_id(url)
-
-        validate_url(url)
         headers = self._headers(
             user_agent=IPHONE_USER_AGENT,
             accept_language=self.ACCEPT_LANGUAGE,
@@ -171,7 +167,6 @@ class TikTokAPI(BasePlatformAPI):
 
     def _scrape_via_html(self, profile_url: str, max_videos: int) -> List[str]:
         """Fallback: extract video IDs from HTML + embedded JSON."""
-        validate_url(profile_url)
         headers = self._headers(
             user_agent=PC_USER_AGENT,
             accept_language=self.ACCEPT_LANGUAGE,
