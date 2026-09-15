@@ -23,11 +23,23 @@ _FILE_MARKERS = (".txt", ".csv", ".list")
 
 # Default concurrency — sweet spot for TikTok/Douyin rate limits
 _DEFAULT_WORKERS = 4
+_MAX_WORKERS = 16
+
+
+def _batch_workers() -> int:
+    """Batch concurrency, env-overridable for bigger Ubuntu boxes."""
+    import os
+    try:
+        w = int(os.getenv("DOWNLOAD_WORKERS", str(_DEFAULT_WORKERS)))
+    except (TypeError, ValueError):
+        w = _DEFAULT_WORKERS
+    return max(1, min(_MAX_WORKERS, w))
 
 
 def _is_douyin_input(value: str) -> bool:
     """Best-effort guess of which platform a bare handle targets."""
-    return False  # bare handles default to TikTok; tracks carry their own domain
+    v = (value or "").strip().lower()
+    return "douyin.com" in v or "iesdouyin.com" in v
 
 
 class ProfileScraper:
@@ -216,9 +228,15 @@ class ProfileScraper:
         username: str,
         output_dir: Optional[str] = None,
         progress_hook: Optional[Callable[[Dict[str, Any]], None]] = None,
-        workers: int = _DEFAULT_WORKERS,
+        workers: int = 0,
     ) -> Dict[str, Any]:
-        """Download a list of video URLs/IDs concurrently into the profile folder."""
+        """Download a list of video URLs/IDs concurrently into the profile folder.
+
+        *workers* = explicit override; 0 (default) reads ``DOWNLOAD_WORKERS``
+        (clamped to 1–16). Per-item scrapes are paced by the shared stealth
+        limiter, so raising workers speeds up CDN downloads without turning
+        the scrape side into a detectable burst.
+        """
         base_dir = Path(
             output_dir or self.cookie_manager.config.get("download_dir", "downloads")
         )
@@ -230,6 +248,7 @@ class ProfileScraper:
 
         results: List[Dict[str, Any]] = []
         total = len(urls_or_ids)
+        workers = workers or _batch_workers()
 
         # Use ThreadPoolExecutor for concurrent downloads
         with ThreadPoolExecutor(max_workers=workers) as executor:

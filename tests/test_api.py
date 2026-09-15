@@ -143,7 +143,7 @@ def test_download_subtitles_writes_srt(tmp_path):
     resp.status_code = 200
     resp.headers = {"content-type": "application/x-subrip; charset=utf-8"}
     resp.content = b"1\n00:00:01 --> 00:00:02\nHi\n"
-    api.session.get = mock.Mock(return_value=resp)
+    api._request_with_retry = mock.Mock(return_value=resp)
     api._headers = mock.Mock(return_value={})
     dldr.get_api.return_value = api
 

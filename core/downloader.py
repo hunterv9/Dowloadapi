@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any, Optional, Callable, List
 
-from .base_api import sanitize_filename
+from .base_api import BasePlatformAPI, sanitize_filename
 from .cookie_manager import CookieManager
 from .tiktok_api import TikTokAPI
 from .douyin_api import DouyinAPI
@@ -22,10 +22,16 @@ class TikTokDownloader:
 
     # -- cookie management --------------------------------------------------
     def _refresh_cookies(self) -> None:
-        """Re-read cookies from the cookie manager and propagate to API clients."""
-        cookie_str = self.cookie_manager.get_active_cookie_string()
-        self.tiktok_api.set_cookie_string(cookie_str)
-        self.douyin_api.set_cookie_string(cookie_str)
+        """Re-read cookies from the cookie manager and propagate to API clients.
+
+        Each platform gets its own domain-scoped string so auto-collected
+        TikTok cookies are never sent to Douyin and vice versa. A manual
+        ``custom_cookie_string`` still applies to both (backward compatible).
+        """
+        self.tiktok_api.set_cookie_string(
+            self.cookie_manager.get_active_cookie_string("tiktok.com"))
+        self.douyin_api.set_cookie_string(
+            self.cookie_manager.get_active_cookie_string("douyin.com"))
 
     def refresh_cookies(self) -> None:
         """Public entry point to refresh cookies after a config change."""
@@ -35,7 +41,7 @@ class TikTokDownloader:
     def is_douyin(self, url: str) -> bool:
         return "douyin.com" in url or "iesdouyin.com" in url
 
-    def get_api(self, url: str):
+    def get_api(self, url: str) -> BasePlatformAPI:
         """Return the appropriate API client for *url* with fresh cookies."""
         self._refresh_cookies()
         if self.is_douyin(url):
@@ -49,10 +55,6 @@ class TikTokDownloader:
     def get_video_info(self, url: str) -> Dict[str, Any]:
         api = self.get_api(url)
         return api.get_video_info(url)
-
-    def get_info(self, url: str) -> Dict[str, Any]:
-        """Alias for :meth:`get_video_info` — backward compatibility."""
-        return self.get_video_info(url)
 
     def download_video_with_info(
         self,
@@ -121,7 +123,7 @@ class TikTokDownloader:
     def download_subtitles(
         self,
         url: str,
-        base_dir=None,
+        base_dir: Optional[Path] = None,
         info: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """Download every caption attached to a video as ``.srt``/``.vtt``.
@@ -153,7 +155,7 @@ class TikTokDownloader:
             if not caption_url:
                 continue
             try:
-                r = api.session.get(caption_url, headers=api._headers(), timeout=15)
+                r = api._request_with_retry("GET", caption_url, headers=api._headers(), timeout=15)
                 if r.status_code != 200:
                     continue
                 content_type = r.headers.get("content-type", "")

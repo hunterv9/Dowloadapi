@@ -27,8 +27,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi.security import APIKeyHeader
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, ORJSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 
 # Ensure project root is on sys.path so `from core import …` works
@@ -44,11 +47,46 @@ from core.service import _friendly_error
 _log = logging.getLogger(__name__)
 
 
+# -- API key auth (optional -- skip when API_KEY not set for local dev) --
+_API_KEY = os.getenv("API_KEY", "")
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verify_api_key(api_key: Optional[str] = Depends(_api_key_header)) -> None:
+    if not _API_KEY:
+        return
+    if api_key != _API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
 # ── In-memory task tracking (keyed by UUID) ──────────────────────────────────
 
 download_tasks: Dict[str, Dict[str, Any]] = {}
+MAX_TASKS = 1000
 _TASK_MAX_AGE_SECONDS = 3600  # cleanup tasks older than 1 hour
 _TASK_CLEANUP_INTERVAL_SECONDS = 60
+
+
+def _evict_tasks_if_full() -> None:
+    """Bound download_tasks; evict oldest finished tasks first."""
+    if len(download_tasks) < MAX_TASKS:
+        return
+    finished = sorted(
+        ((tid, t) for tid, t in download_tasks.items()
+         if t.get("status") in ("completed", "failed")),
+        key=lambda kv: kv[1].get("_created_at", 0),
+    )
+    for tid, _ in finished:
+        download_tasks.pop(tid, None)
+        if len(download_tasks) < MAX_TASKS:
+            return
+    # No (or not enough) finished tasks: fall back to oldest overall.
+    if len(download_tasks) >= MAX_TASKS:
+        oldest = sorted(
+            download_tasks.items(), key=lambda kv: kv[1].get("_created_at", 0)
+        )
+        for tid, _ in oldest[: len(download_tasks) - MAX_TASKS + 1]:
+            download_tasks.pop(tid, None)
 
 
 async def _periodic_cleanup() -> None:
@@ -90,6 +128,64 @@ app = FastAPI(
 )
 
 
+def _cors_origins() -> list:
+    raw = os.getenv("CORS_ORIGINS", "http://localhost:3000")
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+# -- Rate limiting (in-memory per-IP sliding window, no extra deps) --
+_RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "100"))
+_RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))
+_RATE_LIMIT_MAX_IPS = 10000
+_rate_buckets: Dict[str, list] = {}
+
+
+class _RateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        ip = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+        bucket = _rate_buckets.get(ip)
+        if bucket is None:
+            bucket = _rate_buckets[ip] = []
+        cutoff = now - _RATE_LIMIT_WINDOW
+        while bucket and bucket[0] <= cutoff:
+            bucket.pop(0)
+        if len(bucket) >= _RATE_LIMIT_REQUESTS:
+            return ORJSONResponse({"detail": "Too many requests"}, status_code=429)
+        bucket.append(now)
+        if len(_rate_buckets) > _RATE_LIMIT_MAX_IPS:
+            # ponytail: crude eviction; upgrade to LRU/Redis when multi-worker.
+            _rate_buckets.pop(next(iter(_rate_buckets)))
+        return await call_next(request)
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        resp = await call_next(request)
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["X-XSS-Protection"] = "1; mode=block"
+        return resp
+
+
+app.add_middleware(_RateLimitMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_middleware(_SecurityHeadersMiddleware)
+
+
+# -- Public health check (no auth) --
+
+@app.get("/")
+async def health():
+    return {"ok": True}
+
+
 # ── Request models ───────────────────────────────────────────────────────────
 
 class VideoInfoRequest(BaseModel):
@@ -113,7 +209,7 @@ def _invalidate_list_cache() -> None:
     _list_cache["data"] = None
 
 
-@app.get("/api/downloads")
+@app.get("/api/downloads", dependencies=[Depends(verify_api_key)])
 async def api_list_downloads():
     """List files in the downloads directory (cached for 2 seconds)."""
     now = time.monotonic()
@@ -132,7 +228,7 @@ async def api_list_downloads():
 
 # ── Video info ───────────────────────────────────────────────────────────────
 
-@app.post("/api/video-info")
+@app.post("/api/video-info", dependencies=[Depends(verify_api_key)])
 async def api_video_info(req: VideoInfoRequest):
     try:
         # analyze_video performs blocking HTTP scrapes → run in a worker
@@ -170,8 +266,22 @@ def _run_single_task(task_id: str, url: str, custom_dir: Optional[str]):
         download_tasks[task_id].update(status="failed", error=error_msg)
 
 
-@app.post("/api/download-single")
+def _validate_custom_dir(custom_dir: Optional[str]) -> None:
+    if not custom_dir:
+        return
+    stripped = custom_dir.strip()
+    if not stripped:
+        return
+    if Path(stripped).is_absolute() or stripped.startswith("/"):
+        raise HTTPException(status_code=400, detail="custom_dir must be relative")
+    if service.safe_media_path(custom_dir) is None:
+        raise HTTPException(status_code=400, detail="custom_dir escapes downloads directory")
+
+
+@app.post("/api/download-single", dependencies=[Depends(verify_api_key)])
 async def api_download_single(req: DownloadSingleRequest, bg: BackgroundTasks):
+    _validate_custom_dir(req.custom_dir)
+    _evict_tasks_if_full()
     task_id = str(uuid.uuid4())
     bg.add_task(_run_single_task, task_id, req.url, req.custom_dir)
     return {"success": True, "task_id": task_id}
@@ -179,7 +289,7 @@ async def api_download_single(req: DownloadSingleRequest, bg: BackgroundTasks):
 
 # ── Task status ──────────────────────────────────────────────────────────────
 
-@app.get("/api/task-status/{task_id}")
+@app.get("/api/task-status/{task_id}", dependencies=[Depends(verify_api_key)])
 async def api_task_status(task_id: str):
     task = download_tasks.get(task_id)
     if task is None:
@@ -189,7 +299,7 @@ async def api_task_status(task_id: str):
 
 # ── Media serving ────────────────────────────────────────────────────────────
 
-@app.get("/downloaded-media/{file_path:path}")
+@app.get("/downloaded-media/{file_path:path}", dependencies=[Depends(verify_api_key)])
 async def serve_downloaded_media(file_path: str):
     target = service.safe_media_path(file_path)
     if not target or not target.is_file():
@@ -197,9 +307,11 @@ async def serve_downloaded_media(file_path: str):
     return FileResponse(target)
 
 
-def main(host: str = "127.0.0.1", port: int = 8000) -> None:
+def main(host: str = "127.0.0.1", port: Optional[int] = None) -> None:
     """Entry point for `python apps/web/app.py` and the `tikdl-web` console script."""
     import uvicorn
+    if port is None:
+        port = int(os.getenv("WEB_PORT", "8000"))
     workers = int(os.getenv("WEB_WORKERS", "1"))
     if workers > 1:
         # Multi-process mode requires an import string (not the app object).

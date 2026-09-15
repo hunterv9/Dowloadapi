@@ -1,11 +1,12 @@
 """Async load benchmark (aiohttp, keep-alive) — measures server throughput."""
+import os
 import asyncio
 import time
 from collections import Counter
 
 import aiohttp
 
-BASE = "http://127.0.0.1:8098"
+BASE = os.getenv("BENCH_BASE", "http://127.0.0.1:8000")
 TOTAL = 5000
 CONCURRENCY = 200
 

@@ -1,17 +1,18 @@
-"""Shared business logic used by both Web (FastAPI) and Desktop (WebSocket) backends.
+"""Shared business logic used by both Web (FastAPI) and CLI backends.
 
-This module eliminates code duplication between web/app.py and desktop/ws_server.py.
 All download, config, file management operations live here.
 """
 
 import os
-import sys
 import json
+import re
 import logging
-import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from .exceptions import AuthError, NotFoundError, PlatformError, RateLimitError, ValidationError
 from .cookie_manager import CookieManager
 from .downloader import TikTokDownloader
 from .profile_scraper import ProfileScraper
@@ -21,6 +22,23 @@ _log = logging.getLogger(__name__)
 
 def friendly_error(exc: Exception, context: str = "") -> str:
     """Convert technical exceptions into user-friendly Vietnamese messages."""
+    # Typed errors first — avoids brittle string matching on Vietnamese messages.
+    if isinstance(exc, ValidationError):
+        return "Link không hợp lệ. Hãy kiểm tra lại đường dẫn TikTok hoặc Douyin."
+    if isinstance(exc, AuthError):
+        return "Video này ở chế độ riêng tư hoặc yêu cầu đăng nhập. Thử nhập cookie trong mục Cấu hình."
+    if isinstance(exc, NotFoundError):
+        return "Video không tồn tại hoặc đã bị xóa."
+    if isinstance(exc, RateLimitError):
+        return "Bạn đang tải quá nhanh. Chờ vài giây rồi thử lại."
+    if isinstance(exc, PlatformError):
+        code = getattr(exc, "status_code", None)
+        if code in (401, 403):
+            return "Video này ở chế độ riêng tư hoặc yêu cầu đăng nhập. Thử nhập cookie trong mục Cấu hình."
+        if code == 404:
+            return "Video không tồn tại hoặc đã bị xóa."
+        if code == 429:
+            return "Bạn đang tải quá nhanh. Chờ vài giây rồi thử lại."
     msg = str(exc).lower()
     raw = str(exc)
 
@@ -38,14 +56,15 @@ def friendly_error(exc: Exception, context: str = "") -> str:
         return "Bạn đang tải quá nhanh. Chờ vài giây rồi thử lại."
     if "geo" in msg or "region" in msg or "blocked" in msg:
         return "Video bị chặn theo khu vực. Thử dùng VPN."
-    if "cookie" in msg:
+    if re.search(r'\bcookie\b', msg, re.I):
         return "Cookie không hợp lệ hoặc đã hết hạn. Cập nhật lại trong mục Cấu hình."
     if "disk" in msg or "space" in msg or "no space" in msg:
         return "Không đủ dung lượng ổ cứng. Giải phóng bộ nhớ rồi thử lại."
     if "permission" in msg or "access denied" in msg:
         return "Không có quyền ghi file. Kiểm tra quyền thư mục lưu trữ."
 
-    return f"Đã xảy ra lỗi: {raw[:120]}" if len(raw) > 120 else f"Đã xảy ra lỗi: {raw}"
+    _log.error("Unhandled error: %s", raw)
+    return "Đã xảy ra lỗi không xác định. Vui lòng thử lại sau."
 
 
 # Backward-compatible name used by the Web and CLI routing layers.
@@ -56,6 +75,7 @@ _friendly_error = friendly_error
 cookie_mgr = CookieManager()
 downloader = TikTokDownloader(cookie_mgr)
 scraper = ProfileScraper(cookie_mgr)
+
 
 
 # ── Path helpers ─────────────────────────────────────────────────────────────
@@ -103,22 +123,52 @@ def save_config(updates: Dict[str, Any]) -> Dict[str, Any]:
 
 # ── Video analysis ───────────────────────────────────────────────────────────
 
+_CACHE_MAX = 1000
+_video_info_cache: Dict[str, Dict[str, Any]] = {}
+_video_info_lock = threading.Lock()
+
+
+def _video_info_ttl() -> int:
+    try:
+        return max(0, int(os.getenv("VIDEO_INFO_TTL", "300")))
+    except (TypeError, ValueError):
+        return 300
+
+
 def analyze_video(url: str) -> Dict[str, Any]:
     """Fetch metadata for a single video URL.
 
+    Results are cached in-memory for ``VIDEO_INFO_TTL`` seconds (default
+    300): repeated lookups of the same URL skip the scrape entirely, which
+    both raises effective throughput and halves bot-like traffic.
     Raises on invalid/unreachable URLs.
     """
     if not url or not url.strip():
         raise ValueError("Liên kết video không được để trống")
-    return downloader.get_video_info(url.strip())
+    key = url.strip()
+    ttl = _video_info_ttl()
+    if ttl > 0:
+        now = time.time()
+        with _video_info_lock:
+            hit = _video_info_cache.get(key)
+            if hit and now - hit["at"] < ttl:
+                return hit["data"]
+    data = downloader.get_video_info(key)
+    if ttl > 0:
+        with _video_info_lock:
+            now = time.time()
+            for k in [k for k, v in _video_info_cache.items() if now - v["at"] >= ttl]:
+                _video_info_cache.pop(k, None)
+            while len(_video_info_cache) >= _CACHE_MAX:
+                _video_info_cache.pop(next(iter(_video_info_cache)))
+            _video_info_cache[key] = {"at": now, "data": data}
+    return data
 
 
-def download_subtitles(url: str) -> Dict[str, Any]:
-    """Download subtitle files for a video. Returns list of saved file paths."""
-    if not url or not url.strip():
-        raise ValueError("Liên kết không được để trống")
-    files = downloader.download_subtitles(url.strip())
-    return {"success": True, "files": files, "count": len(files)}
+def clear_video_info_cache() -> None:
+    """Drop the video-info cache (used by tests)."""
+    with _video_info_lock:
+        _video_info_cache.clear()
 
 
 # ── Single download ──────────────────────────────────────────────────────────
@@ -160,6 +210,17 @@ def download_video_list(
         username=username,
         output_dir=output_dir,
         progress_hook=progress_hook,
+    )
+
+
+def download_profile_or_list(
+    target: str,
+    max_videos: int = 0,
+    progress_callback: Optional[Callable] = None,
+) -> Dict[str, Any]:
+    """CLI-friendly: resolve *target* (profile/file/list) and batch-download."""
+    return scraper.download_profile_or_list(
+        target, max_videos=max_videos, progress_callback=progress_callback
     )
 
 
@@ -213,32 +274,6 @@ def list_downloads() -> Dict[str, Any]:
 
 
 # ── File operations ──────────────────────────────────────────────────────────
-
-def open_downloads_folder() -> Dict[str, Any]:
-    """Open the downloads directory in the OS file manager."""
-    download_dir = get_downloads_dir()
-    if sys.platform == "win32":
-        os.startfile(str(download_dir))
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", str(download_dir)])
-    else:
-        subprocess.Popen(["xdg-open", str(download_dir)])
-    return {"success": True, "message": "Đã mở thư mục"}
-
-
-def reveal_file(file_path: str) -> Dict[str, Any]:
-    """Open Explorer/Finder and select the given file."""
-    safe_path = safe_media_path(file_path) if file_path else None
-    if not safe_path or not safe_path.exists():
-        return {"success": False, "error": "File không tồn tại"}
-    if sys.platform == "win32":
-        subprocess.Popen(["explorer", f"/select,{safe_path}"])
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", "-R", str(safe_path)])
-    else:
-        subprocess.Popen(["xdg-open", str(safe_path.parent)])
-    return {"success": True}
-
 
 def delete_download(file_path: str) -> Dict[str, Any]:
     """Delete a downloaded file and its sidecar metadata."""

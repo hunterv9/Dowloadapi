@@ -15,6 +15,8 @@ from .base_api import (
     IPHONE_USER_AGENT,
     PC_USER_AGENT,
 )
+from .exceptions import NotFoundError, ValidationError
+from .url_validator import validate_url
 
 __all__ = ["DouyinAPI"]
 
@@ -49,8 +51,9 @@ class DouyinAPI(BasePlatformAPI):
             url = self.resolve_shortlink(url, self.SHORT_MARKERS)
             video_id = video_id or self.extract_video_id(url)
 
+        validate_url(url)
         if not video_id:
-            raise Exception("Không thể nhận diện ID video Douyin từ liên kết.")
+            raise ValidationError("Không thể nhận diện ID video Douyin từ liên kết.")
 
         headers = self._headers(
             user_agent=IPHONE_USER_AGENT,
@@ -100,12 +103,8 @@ class DouyinAPI(BasePlatformAPI):
                             stream_url = play_urls[0].replace("/playwm/", "/play/")
                         captions.extend(self.find_subtitle_entries(it))
                         break
-# 2) Fallback: direct official Douyin play endpoint
         if not stream_url:
-            stream_url = (
-                f"https://aweme.snssdk.com/aweme/v1/play/"
-                f"?video_id={video_id}&ratio=1080p&line=0"
-            )
+            raise NotFoundError("Không tìm thấy video")
 
         return {
             "success": True,
@@ -126,6 +125,7 @@ class DouyinAPI(BasePlatformAPI):
 
     def _scrape_via_html(self, profile_url: str, max_videos: int) -> List[str]:
         """Fallback: extract video IDs from HTML + embedded JSON."""
+        validate_url(profile_url)
         headers = self._headers(
             user_agent=PC_USER_AGENT,
             accept_language=self.ACCEPT_LANGUAGE,

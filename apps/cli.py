@@ -23,9 +23,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, DownloadColumn, TransferSpeedColumn, TimeRemainingColumn
 
-from core.cookie_manager import CookieManager
-from core.downloader import TikTokDownloader
-from core.profile_scraper import ProfileScraper
+from core import service
 from core.service import _friendly_error as _cli_friendly_error
 
 console = Console()
@@ -48,8 +46,8 @@ def print_banner():
         padding=(1, 5),
     ))
 
-def show_config(cookie_mgr: CookieManager):
-    cfg = cookie_mgr.config
+def show_config():
+    cfg = service.get_config()["config"]
     table = Table(title="[bold green]Cấu Hình Hiện Tại[/bold green]")
     table.add_column("Tham số", style="cyan")
     table.add_column("Giá trị", style="yellow")
@@ -61,7 +59,7 @@ def show_config(cookie_mgr: CookieManager):
 
     console.print(table)
 
-def handle_single_download(downloader: TikTokDownloader):
+def handle_single_download():
     url = Prompt.ask("\n[bold cyan]Nhập liên kết video TikTok hoặc Douyin[/bold cyan]")
     if not url.strip():
         console.print("[red]Liên kết không được để trống![/red]")
@@ -69,7 +67,7 @@ def handle_single_download(downloader: TikTokDownloader):
 
     with console.status("[bold green]Đang phân tích thông tin video từ TikTok/Douyin...[/bold green]"):
         try:
-            info = downloader.get_video_info(url)
+            info = service.analyze_video(url)
         except Exception as e:
             console.print(f"[bold red]Lỗi phân tích:[/bold red] {_cli_friendly_error(e)}")
             return
@@ -101,12 +99,12 @@ def handle_single_download(downloader: TikTokDownloader):
                 progress.update(task_id, total=total, completed=downloaded)
 
         try:
-            res = downloader.download_video(url, progress_callback=update_progress)
+            res = service.download_single_video(url, progress_callback=update_progress)
             console.print(f"\n[bold green]✔ Tải thành công![/bold green] Đã lưu tại:\n[yellow]{res['saved_path']}[/yellow]")
         except Exception as e:
             console.print(f"\n[bold red]✖ Lỗi khi tải video:[/bold red] {_cli_friendly_error(e)}")
 
-def handle_profile_download(scraper: ProfileScraper):
+def handle_profile_download():
     target = Prompt.ask("\n[bold cyan]Nhập @username kênh hoặc đường dẫn file danh sách URL[/bold cyan]")
     if not target.strip():
         console.print("[red]Không được để trống mục tiêu![/red]")
@@ -134,7 +132,7 @@ def handle_profile_download(scraper: ProfileScraper):
                 progress.update(task, description=f"[cyan]{msg}")
 
         try:
-            res = scraper.download_profile_or_list(target, max_videos=max_videos, progress_callback=batch_callback)
+            res = service.download_profile_or_list(target, max_videos=max_videos, progress_callback=batch_callback)
             console.print(Panel.fit(
                 f"[bold]Tổng số video:[/bold] {res.get('total', 0)}\n"
                 f"[bold green]Thành công:[/bold green] {res.get('downloaded', 0)}\n"
@@ -152,8 +150,8 @@ def handle_profile_download(scraper: ProfileScraper):
         except Exception as e:
             console.print(f"\n[bold red]✖ Lỗi tiến trình hàng loạt:[/bold red] {_cli_friendly_error(e)}")
 
-def handle_settings(cookie_mgr: CookieManager):
-    show_config(cookie_mgr)
+def handle_settings():
+    show_config()
     console.print("\n[bold]Tùy chọn cấu hình:[/bold]")
     console.print("1. Nhập cookie thủ công")
     console.print("2. Đổi thư mục tải về")
@@ -163,18 +161,15 @@ def handle_settings(cookie_mgr: CookieManager):
 
     if choice == "1":
         c = Prompt.ask("Dán chuỗi cookie (để trống để xóa)")
-        cookie_mgr.save_config({"custom_cookie_string": c.strip()})
+        service.save_config({"custom_cookie_string": c.strip()})
         console.print("[green]✔ Đã cập nhật chuỗi cookie![/green]")
     elif choice == "2":
         d = Prompt.ask("Đường dẫn thư mục lưu trữ mới")
         if d.strip():
-            cookie_mgr.save_config({"download_dir": d.strip()})
+            service.save_config({"download_dir": d.strip()})
             console.print("[green]✔ Đã cập nhật thư mục lưu trữ![/green]")
 
 def main():
-    cookie_mgr = CookieManager()
-    downloader = TikTokDownloader(cookie_mgr)
-    scraper = ProfileScraper(cookie_mgr)
 
     while True:
         os.system("cls" if os.name == "nt" else "clear")
@@ -189,21 +184,19 @@ def main():
         choice = Prompt.ask("\nNhập lựa chọn của bạn", choices=["1", "2", "3", "4", "5"], default="1")
 
         if choice == "1":
-            handle_single_download(downloader)
+            handle_single_download()
             Prompt.ask("\n[dim]Nhấn Enter để tiếp tục...[/dim]")
         elif choice == "2":
-            handle_profile_download(scraper)
-            Prompt.ask("\n[dim]Nhấn Enter để tiếp tục...[/dim]")
-        elif choice == "3":
-            handle_settings(cookie_mgr)
+            handle_settings()
             Prompt.ask("\n[dim]Nhấn Enter để tiếp tục...[/dim]")
         elif choice == "4":
-            console.print("[bold green]Đang khởi động Web Dashboard tại http://127.0.0.1:8080 ...[/bold green]")
+            _port = os.getenv("CLI_PORT", "8080")
+            console.print(f"[bold green]Đang khởi động Web Dashboard tại http://127.0.0.1:{_port} ...[/bold green]")
             console.print("[dim]Nhấn Ctrl+C trong terminal này để dừng server.[/dim]")
             try:
                 proc = subprocess.Popen(
                     [sys.executable, "-m", "uvicorn", "apps.web.app:app",
-                     "--host", "127.0.0.1", "--port", "8080"],
+                     "--host", "127.0.0.1", "--port", _port],
                     cwd=str(_PROJECT_ROOT),
                 )
                 proc.wait()

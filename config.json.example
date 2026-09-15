@@ -1,0 +1,14 @@
+{
+  // Custom cookie string for authentication (optional)
+  // Leave empty to use auto-cookies or no cookies
+  "custom_cookie_string": "",
+
+  // Download directory - relative to project root or absolute path
+  "download_dir": "./downloads",
+
+  // Video quality preference: "hd", "sd", or "original"
+  "video_quality": "hd",
+
+  // Whether to save metadata JSON files alongside videos
+  "save_metadata": true
+}

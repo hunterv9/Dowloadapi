@@ -8,6 +8,7 @@ that both platforms share — eliminating duplication between
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import (
@@ -20,18 +21,16 @@ from typing import (
 
 import requests
 
+from . import stealth as _stealth
+from .exceptions import AuthError, NotFoundError, PlatformError, RateLimitError
+from .url_validator import validate_url, validate_stream_url
+
 _log = logging.getLogger(__name__)
 
 __all__ = ["BasePlatformAPI", "IPHONE_USER_AGENT", "PC_USER_AGENT"]
 
-IPHONE_USER_AGENT = (
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
-    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
-)
-PC_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
+# Single source: core/stealth.py (Chrome 126). Re-exported here for compat.
+from .stealth import IPHONE_USER_AGENT, PC_USER_AGENT  # noqa: F401,E402
 
 # JSON keys that may contain subtitle/caption data inside parsed payloads.
 _SUBTITLE_KEYS = (
@@ -70,8 +69,23 @@ class BasePlatformAPI:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": self.REFERER,
         })
+        # Keep-alive pool sized for thread concurrency (batch downloads).
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=10, pool_maxsize=32, max_retries=0)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
         if self.cookie_string:
             self.session.headers["Cookie"] = self.cookie_string
+
+    @staticmethod
+    def _bucket_for(url: str) -> str:
+        """Bucket name for pacing — the request host, fallback 'scrape'."""
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(url).hostname or ""
+            return host.lower() or "scrape"
+        except Exception:
+            return "scrape"
 
     # -- cookie / session helpers --------------------------------------- #
     def _recreate_session(self) -> None:
@@ -83,6 +97,10 @@ class BasePlatformAPI:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": self.REFERER,
         })
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=10, pool_maxsize=32, max_retries=0)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
         if self.cookie_string:
             self.session.headers["Cookie"] = self.cookie_string
 
@@ -100,16 +118,15 @@ class BasePlatformAPI:
         referer: Optional[str] = None,
         accept_language: Optional[str] = None,
     ) -> Dict[str, str]:
-        """Build per-request headers while preserving any active cookie."""
-        headers: Dict[str, str] = {
-            "User-Agent": user_agent or IPHONE_USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Referer": referer or self.REFERER,
-        }
+        """Build per-request headers while preserving any active cookie.
+
+        Uses a rotated browser-like header set (anti-fingerprint) unless a
+        specific *user_agent* is requested (e.g. mobile UA for CDN streams).
+        """
+        headers = _stealth.browser_like_headers(
+            user_agent=user_agent, referer=referer or self.REFERER)
         if accept_language:
             headers["Accept-Language"] = accept_language
-        elif self.ACCEPT_LANGUAGE:
-            headers["Accept-Language"] = self.ACCEPT_LANGUAGE
         if self.cookie_string:
             headers["Cookie"] = self.cookie_string
         return headers
@@ -122,9 +139,11 @@ class BasePlatformAPI:
         input when the request fails.
         """
         raw_url = raw_url.strip()
+        validate_url(raw_url)
         if any(marker in raw_url for marker in short_markers):
             try:
                 r = self.session.head(raw_url, allow_redirects=True, timeout=10)
+                validate_url(r.url)
                 return r.url.split("?")[0]
             except Exception:
                 pass
@@ -222,23 +241,46 @@ class BasePlatformAPI:
     def _request_with_retry(
         self, method: str, url: str, max_retries: int = 3, **kwargs
     ) -> requests.Response:
-        """HTTP request with automatic retry on transient failures.
+        """HTTP request with pacing, jittered retry and 429 compliance.
 
+        * every attempt is paced per-domain (token bucket + jitter) so
+          concurrent workers can't produce metronome-like bursts;
+        * 429 honours ``Retry-After`` and triggers a cool-down every 3rd
+          consecutive hit on the same host;
+        * 5xx / network errors use exponential backoff with full jitter;
+        * other 4xx fail fast (retrying them only burns quota and flags us).
         On SSL errors the session is recreated to get a fresh TLS handshake.
         """
+        validate_url(url)
         kwargs.setdefault("timeout", 15)
+        bucket = self._bucket_for(url)
         last_exc = None
         for attempt in range(max_retries):
+            _stealth.pace_before_request(bucket)
             try:
                 resp = self.session.request(method, url, **kwargs)
-                if resp.status_code >= 500:
-                    last_exc = Exception(f"HTTP {resp.status_code}")
-                elif resp.status_code == 429:
-                    last_exc = Exception("HTTP 429")
+                if resp.status_code == 429:
+                    wait = _stealth.retry_after_seconds(resp.headers.get("Retry-After"))
+                    if wait:
+                        import time
+                        time.sleep(wait)
+                    _stealth.note_429(bucket)
+                    last_exc = RateLimitError(f"HTTP 429", status_code=429)
+                elif resp.status_code >= 500:
+                    last_exc = PlatformError(f"HTTP {resp.status_code}", status_code=resp.status_code)
                 elif resp.status_code >= 400:
                     # ponytail: ceiling=4xx fail fast no retry; upgrade path=retry-after/backoff for 429 only.
-                    raise Exception(f"HTTP {resp.status_code}")
+                    code = resp.status_code
+                    msg = f"HTTP {code}"
+                    if code in (401, 403):
+                        raise AuthError(msg, status_code=code)
+                    if code == 404:
+                        raise NotFoundError(msg, status_code=code)
+                    if code == 429:
+                        raise RateLimitError(msg, status_code=code)
+                    raise PlatformError(msg, status_code=code)
                 else:
+                    _stealth.note_success(bucket)
                     return resp
             except requests.exceptions.SSLError as e:
                 last_exc = e
@@ -247,11 +289,18 @@ class BasePlatformAPI:
             except (requests.ConnectionError, requests.Timeout) as e:
                 last_exc = e
             if attempt < max_retries - 1:
-                import time
-                time.sleep(1 * (attempt + 1))
+                _stealth.backoff_sleep(attempt)
         raise last_exc  # type: ignore[misc]
 
     # -- streaming download — shared by both platforms -------------------- #
+    @staticmethod
+    def _max_download_bytes() -> int:
+        """Cap for a single streamed download (default 500MB)."""
+        try:
+            return int(os.getenv("MAX_DOWNLOAD_BYTES", str(500 * 1024 * 1024)))
+        except (TypeError, ValueError):
+            return 500 * 1024 * 1024
+
     def download_stream(
         self,
         download_url: str,
@@ -259,6 +308,7 @@ class BasePlatformAPI:
         progress_callback: Optional[Callable[[int, int, float], None]] = None,
     ) -> str:
         """Stream a media file to disk in 64KB chunks, reporting progress."""
+        validate_stream_url(download_url)
         headers = self._headers(user_agent=IPHONE_USER_AGENT, referer=self.REFERER)
         headers["Range"] = "bytes=0-"
 
@@ -272,19 +322,51 @@ class BasePlatformAPI:
         )
         resp.raise_for_status()
 
-        total_size = int(resp.headers.get("content-length", 0))
+        limit = self._max_download_bytes()
+        try:
+            total_size = int(resp.headers.get("content-length", 0))
+        except (TypeError, ValueError):
+            total_size = 0
+        if total_size > limit:
+            raise PlatformError(
+                f"Content-Length {total_size} exceeds limit {limit}",
+                status_code=413,
+            )
         downloaded = 0
         chunk_size = 64 * 1024
 
-        with open(output_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=chunk_size):
-                if not chunk:
-                    continue
-                f.write(chunk)
-                downloaded += len(chunk)
-                if progress_callback:
-                    percent = (downloaded / total_size * 100) if total_size > 0 else 0
-                    progress_callback(downloaded, total_size, percent)
+        try:
+            with open(output_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=chunk_size):
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if downloaded > limit:
+                        raise PlatformError(
+                            f"Download exceeded limit {limit}",
+                            status_code=413,
+                        )
+                    if progress_callback:
+                        percent = (downloaded / total_size * 100) if total_size > 0 else 0
+                        progress_callback(downloaded, total_size, percent)
+        except Exception:
+            try:
+                output_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
+        # Refuse symlink escapes: final file must resolve inside target dir.
+        resolved = output_path.resolve(strict=True)
+        if output_path.is_symlink() or not resolved.is_relative_to(
+            output_path.parent.resolve()
+        ):
+            try:
+                output_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise PlatformError("Refusing symlink download path")
 
         return str(output_path)
 
@@ -308,11 +390,11 @@ class BasePlatformAPI:
         # --- 1. Headless browser ---
         from .browser_scraper import BrowserScraper
         fallback = limit or 50
-        if not BrowserScraper.is_available():
-            _log.info("Playwright chưa sẵn sàng, đang thử tự động cài đặt Chromium...")
-            BrowserScraper.install_browser()
         if BrowserScraper.is_available():
-            for headless in (True, False):
+            # Headed fallback (solving CAPTCHA by hand) is opt-in only:
+            # on a headless Ubuntu server it would crash/hang the request.
+            modes = (True, False) if _stealth.headed_allowed() else (True,)
+            for headless in modes:
                 try:
                     urls = BrowserScraper.scrape_profile(
                         profile_url, fallback, headless=headless
@@ -327,8 +409,10 @@ class BasePlatformAPI:
                 if urls:
                     return urls
         else:
+            # No mid-request installs: `playwright install` can take minutes
+            # and would stall API requests. Install at deploy time instead.
             _log.warning(
-                "Không thể cài đặt Playwright. Chạy 'pip install playwright && playwright install chromium' để bật tính năng quét profile tự động."
+                "Playwright chưa có. Chạy 'pip install playwright && playwright install chromium' để bật quét profile tự động."
             )
 
         # --- 2. HTML fallback (platform-specific) ---

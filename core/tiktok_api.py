@@ -15,6 +15,8 @@ from .base_api import (
     IPHONE_USER_AGENT,
     PC_USER_AGENT,
 )
+from .exceptions import AuthError, NotFoundError, PlatformError, RateLimitError
+from .url_validator import validate_url
 
 __all__ = ["TikTokAPI"]
 
@@ -56,6 +58,7 @@ class TikTokAPI(BasePlatformAPI):
             url = self.resolve_shortlink(url, self.SHORT_MARKERS)
             video_id = video_id or self.extract_video_id(url)
 
+        validate_url(url)
         headers = self._headers(
             user_agent=IPHONE_USER_AGENT,
             accept_language=self.ACCEPT_LANGUAGE,
@@ -63,9 +66,15 @@ class TikTokAPI(BasePlatformAPI):
         )
         resp = self._request_with_retry("GET", url, headers=headers)
         if resp.status_code != 200:
-            raise Exception(
-                f"Không thể truy cập trang video TikTok (HTTP {resp.status_code})"
-            )
+            _msg = f"Không thể truy cập trang video TikTok (HTTP {resp.status_code})"
+            _code = resp.status_code
+            if _code == 404:
+                raise NotFoundError(_msg, status_code=_code)
+            if _code in (401, 403):
+                raise AuthError(_msg, status_code=_code)
+            if _code == 429:
+                raise RateLimitError(_msg, status_code=_code)
+            raise PlatformError(_msg, status_code=_code)
 
         title = "TikTok Video"
         user_id = "unknown"
@@ -138,9 +147,9 @@ class TikTokAPI(BasePlatformAPI):
                 pass
 
         if not stream_url:
-            raise Exception(
+            raise NotFoundError(
                 "Không thể bóc tách luồng phát video từ máy chủ TikTok."
-                "Vui lòng kiệm lại liên kết."
+                "Vui lòng kiểm lại liên kết."
             )
 
         return {
@@ -162,6 +171,7 @@ class TikTokAPI(BasePlatformAPI):
 
     def _scrape_via_html(self, profile_url: str, max_videos: int) -> List[str]:
         """Fallback: extract video IDs from HTML + embedded JSON."""
+        validate_url(profile_url)
         headers = self._headers(
             user_agent=PC_USER_AGENT,
             accept_language=self.ACCEPT_LANGUAGE,

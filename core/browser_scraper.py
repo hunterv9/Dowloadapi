@@ -4,29 +4,23 @@ Uses Playwright to render JavaScript and bypass WAF/anti-bot protection.
 Falls back gracefully when Playwright is not installed.
 """
 
+import os
 import re
 import sys
 import time
 import random
 import logging
-from pathlib import Path
 from typing import List, Optional
+
+from . import stealth as _stealth
+from .env_utils import BROWSER_DATA_DIR as _BROWSER_DATA_DIR
 
 _log = logging.getLogger(__name__)
 
 __all__ = ["BrowserScraper"]
 
-# Persist browser session (cookies, localStorage) between runs
-_BROWSER_DATA_DIR = Path(__file__).parent.parent / ".browser_data"
 
-# Realistic user agents for rotation
-_USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-]
+# UA pool single source: stealth.pick_user_agent() (Chrome 126).
 
 # Stealth JS to inject before page load — defeats common bot-detection signals
 _STEALTH_JS = """
@@ -86,7 +80,11 @@ class BrowserScraper:
                 return True
             # Fallback: try launching to verify
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+                _ns = os.getenv("COOKIE_NO_SANDBOX", "0") == "1" or (
+                    getattr(os, "geteuid", lambda: -1)() == 0
+                )
+                _ns_args = ["--no-sandbox"] if _ns else []
+                browser = p.chromium.launch(headless=True, args=_ns_args)
                 browser.close()
                 return True
         except Exception:
@@ -134,7 +132,7 @@ class BrowserScraper:
 
         video_ids: List[str] = []
         seen: set = set()
-        ua = random.choice(_USER_AGENTS)
+        ua = _stealth.pick_user_agent()
 
         for attempt in range(3):
             try:
@@ -144,8 +142,12 @@ class BrowserScraper:
                     launch_args = [
                         "--disable-blink-features=AutomationControlled",
                         "--disable-features=IsolateOrigins,site-per-process",
-                        "--no-sandbox",
                     ]
+                    _needs_ns = os.getenv("COOKIE_NO_SANDBOX", "0") == "1" or (
+                        getattr(os, "geteuid", lambda: -1)() == 0
+                    )
+                    if _needs_ns:
+                        launch_args.append("--no-sandbox")
 
                     proxy_settings = None
                     if proxy:
@@ -209,7 +211,7 @@ class BrowserScraper:
                     elif captcha_detected:
                         _log.warning("CAPTCHA detected in headless mode, retrying")
                         context.close()
-                        ua = random.choice(_USER_AGENTS)
+                        ua = _stealth.pick_user_agent()
                         time.sleep(2 * (attempt + 1))
                         continue
 
@@ -262,7 +264,7 @@ class BrowserScraper:
                 _log.warning("Browser scraping attempt %d failed: %s", attempt + 1, e)
                 if attempt < 2:
                     time.sleep(2 * (attempt + 1))
-                    ua = random.choice(_USER_AGENTS)
+                    ua = _stealth.pick_user_agent()
 
         # Build URLs
         username_match = re.search(r"@([a-zA-Z0-9_.\-]+)", profile_url)
