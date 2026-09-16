@@ -177,12 +177,14 @@ def download_single_video(
     url: str,
     custom_dir: Optional[str] = None,
     progress_callback: Optional[Callable] = None,
+    with_subtitles: bool = True,
 ) -> Dict[str, Any]:
     """Download one video.  Returns the result dict from TikTokDownloader."""
     return downloader.download_video(
         url=url,
         custom_output_dir=custom_dir,
         progress_callback=progress_callback,
+        with_subtitles=with_subtitles,
     )
 
 

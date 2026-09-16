@@ -69,10 +69,11 @@ def test_download_single_video_happy_path(monkeypatch):
 def test_download_single_video_forwards_custom_dir_and_callback(monkeypatch):
     received = {}
 
-    def _fake(url, custom_output_dir=None, progress_callback=None):
+    def _fake(url, custom_output_dir=None, progress_callback=None, with_subtitles=True):
         received["url"] = url
         received["custom_output_dir"] = custom_output_dir
         received["progress_callback"] = progress_callback
+        received["with_subtitles"] = with_subtitles
         return {"success": True}
 
     monkeypatch.setattr(service.downloader, "download_video", _fake)
@@ -80,6 +81,7 @@ def test_download_single_video_forwards_custom_dir_and_callback(monkeypatch):
     service.download_single_video("https://www.tiktok.com/@u/video/1", custom_dir="mydir", progress_callback=cb)
     assert received["custom_output_dir"] == "mydir"
     assert received["progress_callback"] is cb
+    assert received["with_subtitles"] is True
 
 
 # -- friendly_error mappings --------------------------------------------------

@@ -18,6 +18,7 @@ Công cụ tải video TikTok/Douyin chất lượng cao chạy dưới dạng *
 |--------|----------|-------|
 | POST | `/api/video-info` | Phân tích URL video: tiêu đề, tác giả, stream, phụ đề |
 | POST | `/api/download-single` | Khởi động tác vụ tải video (async), trả `task_id` |
+| POST | `/api/download-file` | Tải đồng bộ — response chính là file `.mp4` (bỏ qua phụ đề) |
 | GET | `/api/task-status/{task_id}` | Trạng thái tác vụ tải |
 | GET | `/api/downloads` | Danh sách file trong thư mục downloads (cache 2s) |
 | GET | `/downloaded-media/{path}` | Tải file đã download (chống path traversal) |
@@ -29,6 +30,9 @@ curl -X POST http://127.0.0.1:8000/api/video-info -H "Content-Type: application/
 curl -X POST http://127.0.0.1:8000/api/download-single -H "Content-Type: application/json" -d '{"url":"https://www.tiktok.com/@user/video/123"}'
 
 curl http://127.0.0.1:8000/api/task-status/<task_id>
+
+# Tải đồng bộ — trả thẳng file video trong response:
+curl -X POST http://127.0.0.1:8000/api/download-file -H "Content-Type: application/json" -d '{"url":"https://www.tiktok.com/@user/video/123"}' -o video.mp4
 ```
 
 
@@ -37,6 +41,18 @@ curl http://127.0.0.1:8000/api/task-status/<task_id>
 - Bảo mật (auth, rate limit, WAF) do services phía trước xử lý — service này chỉ xử lý request.
 - `downloads/`, `.browser_data/`, `.env`, môi trường Python và file bytecode local được Git bỏ qua.
 - `config.json` có thể chứa cookie và đường dẫn local; không commit cookie thật lên repository.
+
+### 🚄 Tinh chỉnh tốc độ (biến môi trường)
+Tốc độ một lần tải phụ thuộc vào mạng tới TikTok/Douyin, KHÔNG phải tầng API (API layer đo được hàng nghìn rps). Ba chỗ code chủ động "ngủ" để tránh bị platform đánh bot:
+
+| Biến | Mặc định | Ý nghĩa |
+|------|----------|---------|
+| `STEALTH_RPS` | `3` | Số request/giây tối đa mỗi domain (token bucket). Tăng lên nếu muốn scrape nhanh hơn — nhưng tăng nguy cơ 403/429. |
+| `STEALTH_JITTER_MS` | `150,700` | Jitter ngẫu nhiên (ms) ngủ trước mỗi request scrape. Đặt `0,0` để tắt hoàn toàn. |
+| `VIDEO_INFO_TTL` | `300` | Cache video-info (giây) — cùng 1 URL hỏi lại trong TTL sẽ không scrape nữa. |
+| `MAX_DOWNLOAD_BYTES` | `524288000` | Giới hạn dung lượng 1 file tải về. |
+
+Ngoài ra: `/api/download-file` bỏ qua bước tải phụ đề (mỗi phụ đề là thêm 1 request chịu pacing + jitter) nên nhanh hơn `/api/download-single` khi video có phụ đề; tắt `save_metadata` trong `config.json` nếu không cần file `.info.json`.
 
 ## 📦 Cài Đặt
 

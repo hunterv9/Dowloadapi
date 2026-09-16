@@ -36,13 +36,14 @@ Commercial pure REST API (FastAPI) for TikTok & Douyin video downloads, plus a R
 | `scripts/bench.py` | aiohttp load benchmark (BENCH_BASE env, default :8000) | aiohttp (dev extra) | dev |
 | `pyproject.toml` | Package metadata, deps, extras (`browser`, `dev`), console scripts `tikdl-cli` / `tikdl-web` | setuptools | pip/CI |
 
-## API surface (6 routes; no auth — auth/rate-limit handled by upstream services)
+## API surface (7 routes; no auth — auth/rate-limit handled by upstream services)
 
 | Method | Route | Notes |
 |--------|-------|-------|
 | GET | `/` | Health check |
 | POST | `/api/video-info` | `analyze_video` offloaded to worker thread |
 | POST | `/api/download-single` | BackgroundTasks threadpool; returns `task_id` |
+| POST | `/api/download-file` | Synchronous — downloads then streams the .mp4 back (skips subtitles) |
 | GET | `/api/task-status/{task_id}` | In-memory dict lookup (fastest path) |
 | GET | `/api/downloads` | 2s TTL cache + `asyncio.to_thread`; invalidated on download completion |
 | GET | `/downloaded-media/{path}` | `service.safe_media_path` traversal guard + FileResponse |

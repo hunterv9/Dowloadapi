@@ -12,6 +12,7 @@ All business logic lives in core/service.py.
 Endpoints:
     POST /api/video-info             Analyze a video URL (title, author, streams…)
     POST /api/download-single        Start an async single-video download task
+    POST /api/download-file          Download now, stream the .mp4 back directly
     GET  /api/task-status/{task_id}  Poll a download task
     GET  /api/downloads              List files in the downloads directory (2s TTL cache)
     GET  /downloaded-media/{path}    Serve a downloaded file (path-traversal guarded)
@@ -218,6 +219,35 @@ async def api_download_single(req: DownloadSingleRequest, bg: BackgroundTasks):
     task_id = str(uuid.uuid4())
     bg.add_task(_run_single_task, task_id, req.url, req.custom_dir)
     return {"success": True, "task_id": task_id}
+
+# ── Direct file download (synchronous) ───────────────────────────────────────
+
+@app.post("/api/download-file")
+async def api_download_file(req: DownloadSingleRequest):
+    """Download the video and stream the .mp4 straight back to the caller.
+
+    Synchronous: the HTTP response IS the video file. Skips subtitle
+    fetching (subtitles are extra paced requests and cannot be returned in
+    the same response anyway) — use /api/download-single when subtitles,
+    progress tracking or long-running downloads are needed.
+    """
+    _validate_custom_dir(req.custom_dir)
+    try:
+        res = await asyncio.to_thread(
+            service.download_single_video, req.url, req.custom_dir, None, False
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_friendly_error(e, req.url))
+    saved = res.get("saved_path", "")
+    target = service.safe_media_path(saved) if saved else None
+    if not target or not target.is_file():
+        raise HTTPException(status_code=500, detail="Tải xong nhưng file không tìm thấy")
+    _invalidate_list_cache()
+    return FileResponse(
+        target,
+        media_type="video/mp4",
+        filename=res.get("filename") or target.name,
+    )
 
 # ── Task status ──────────────────────────────────────────────────────────────
 

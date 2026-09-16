@@ -62,6 +62,7 @@ class TikTokDownloader:
         info: Dict[str, Any],
         custom_output_dir: Optional[str] = None,
         progress_callback: Optional[Callable[[int, int, float], None]] = None,
+        with_subtitles: bool = True,
     ) -> Dict[str, Any]:
         """Download a video using pre-fetched info (avoids duplicate API call)."""
         api = self.get_api(url)
@@ -98,7 +99,7 @@ class TikTokDownloader:
         # Capture download alongside when available (reuses already-fetched info)
         subtitles = (
             self.download_subtitles(url, base_dir=download_dir, info=info)
-            if info.get("captions")
+            if with_subtitles and info.get("captions")
             else []
         )
         if subtitles:
@@ -110,6 +111,7 @@ class TikTokDownloader:
         url: str,
         custom_output_dir: Optional[str] = None,
         progress_callback: Optional[Callable[[int, int, float], None]] = None,
+        with_subtitles: bool = True,
     ) -> Dict[str, Any]:
         """Resolve, then download a single TikTok or Douyin video."""
         api = self.get_api(url)
@@ -118,6 +120,7 @@ class TikTokDownloader:
             url, info,
             custom_output_dir=custom_output_dir,
             progress_callback=progress_callback,
+            with_subtitles=with_subtitles,
         )
 
     def download_subtitles(
